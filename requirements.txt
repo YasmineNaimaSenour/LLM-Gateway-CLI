@@ -1,0 +1,3 @@
+requests>=2.31
+tiktoken>=0.7   # optional: falls back to a heuristic token counter if not installed
+pytest>=8.0
