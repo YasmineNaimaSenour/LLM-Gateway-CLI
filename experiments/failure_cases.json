@@ -1,0 +1,46 @@
+{
+  "experiment": "failure_cases",
+  "description": "Deliberately induced failure cases for each error category the gateway must classify, captured as raw provider responses paired with the gateway's classification.",
+  "cases": [
+    {
+      "category": "rate_limit",
+      "how_to_trigger": "Send requests faster than the provider's rate limit (e.g. a rapid-fire loop against Groq's free tier).",
+      "provider": "",
+      "raw_error": "",
+      "classified_as": "",
+      "correct": null
+    },
+    {
+      "category": "context_overflow",
+      "how_to_trigger": "Send a prompt longer than the model's context window.",
+      "provider": "",
+      "raw_error": "",
+      "classified_as": "",
+      "correct": null
+    },
+    {
+      "category": "format_error",
+      "how_to_trigger": "Send a malformed request, e.g. a missing required field or invalid role name.",
+      "provider": "",
+      "raw_error": "",
+      "classified_as": "",
+      "correct": null
+    },
+    {
+      "category": "model_error",
+      "how_to_trigger": "Request a model name that does not exist / isn't pulled locally.",
+      "provider": "",
+      "raw_error": "",
+      "classified_as": "",
+      "correct": null
+    },
+    {
+      "category": "unknown",
+      "how_to_trigger": "Any failure that doesn't match the other categories, e.g. an unexpected network hiccup.",
+      "provider": "",
+      "raw_error": "",
+      "classified_as": "",
+      "correct": null
+    }
+  ]
+}

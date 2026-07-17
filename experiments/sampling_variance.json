@@ -1,0 +1,22 @@
+{
+  "experiment": "sampling_variance",
+  "description": "Run the same prompt against the same model at different temperatures to observe how output variance changes with sampling parameters.",
+  "config": {
+    "provider": "ollama",
+    "model": "llama3.2",
+    "prompt": "List three unusual uses for a paperclip.",
+    "system": null,
+    "max_tokens": 200,
+    "temperatures": [0.0, 0.3, 0.7, 1.0, 1.5],
+    "runs_per_temperature": 5
+  },
+  "results": [],
+  "result_schema": {
+    "temperature": "float",
+    "run_index": "int",
+    "output": "string",
+    "tokens_out": "int",
+    "latency_ms": "float"
+  },
+  "notes": ""
+}
