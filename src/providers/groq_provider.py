@@ -1,7 +1,6 @@
 """Groq provider: OpenAI-compatible chat completions API.
 
-Requires GROQ_API_KEY (Groq's free tier is generous enough for this
-curriculum's needs). This is the hosted, faster half of the gateway.
+Requires GROQ_API_KEY. This is the hosted, faster half of the gateway.
 """
 
 from __future__ import annotations
