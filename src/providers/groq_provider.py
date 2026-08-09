@@ -9,11 +9,15 @@ import json
 import os
 from typing import Iterator, List, Optional
 
+from dotenv import load_dotenv
+
 import requests
 
 from ..core.errors import FormatError, ModelError, to_gateway_error
 from ..token_utils import count_tokens
 from .base import BaseProvider, ChatMessage, ChatResponse
+
+load_dotenv()
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 

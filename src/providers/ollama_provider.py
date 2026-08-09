@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Iterator, List, Optional
+from dotenv import load_dotenv
 
 import requests
 
@@ -17,11 +18,12 @@ from ..core.errors import FormatError, ModelError, to_gateway_error
 from ..token_utils import count_tokens
 from .base import BaseProvider, ChatMessage, ChatResponse
 
+load_dotenv()
 
 class OllamaProvider(BaseProvider):
     name = "ollama"
 
-    def __init__(self, model: str = "llama3.2", base_url: Optional[str] = None, timeout: float = 60.0):
+    def __init__(self, model: str = "llama3.2", base_url: Optional[str] = None, timeout: float = 120.0): # timeout should depend on the hardware
         super().__init__(model)
         self.base_url = (base_url or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")).rstrip("/")
         self.timeout = timeout

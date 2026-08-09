@@ -25,7 +25,7 @@ class ChatMessage:
 
 @dataclass
 class ChatResponse:
-    """Final, fully-assembled response (used for both the sync and streamed paths)."""
+    """Final, fully-assembled response (used only for both the sync path)."""
 
     text: str
     tokens_out: int

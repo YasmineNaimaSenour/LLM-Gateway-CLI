@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Optional, Tuple, Type
 
 
-class ErrorType(str, Enum):
+class ErrorType(str, Enum): # we use string enums to enable string properties and serialization for the logs
     RATE_LIMIT = "rate_limit"
     CONTEXT_OVERFLOW = "context"
     FORMAT_ERROR = "format"
@@ -93,7 +93,7 @@ _FORMAT_MARKERS: Tuple[str, ...] = (
 def classify_exception(exc: BaseException, *, status_code: Optional[int] = None) -> ErrorType:
     """Map a raw exception (and optional HTTP status) onto the shared taxonomy."""
 
-    if isinstance(exc, GatewayError):
+    if isinstance(exc, GatewayError): # No need to classify it again. this makes the function idempotent
         return exc.error_type
 
     message = str(exc).lower()
