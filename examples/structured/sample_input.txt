@@ -1,0 +1,5 @@
+Ada Lovelace, 36, worked as a mathematician and writer. She's best known for
+her work on Charles Babbage's Analytical Engine and is widely regarded as
+one of the first computer programmers. Her skills spanned mathematics,
+analytical reasoning, and early algorithm design. She lived in London,
+England.

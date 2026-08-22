@@ -1,3 +1,5 @@
 requests>=2.31
 tiktoken>=0.7   # optional: falls back to a heuristic token counter if not installed
 pytest>=8.0
+pydantic>=2.0   # structured extraction: internal schema->model conversion + validation
+jsonschema>=4.18 # structured extraction: JSON Schema meta-validation

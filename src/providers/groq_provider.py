@@ -25,7 +25,7 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 class GroqProvider(BaseProvider):
     name = "groq"
 
-    def __init__(self, model: str = "llama-3.1-8b-instant", api_key: Optional[str] = None, timeout: float = 60.0):
+    def __init__(self, model: str = "openai/gpt-oss-20b", api_key: Optional[str] = None, timeout: float = 60.0):
         super().__init__(model)
         self.api_key = api_key or os.environ.get("GROQ_API_KEY")
         self.timeout = timeout

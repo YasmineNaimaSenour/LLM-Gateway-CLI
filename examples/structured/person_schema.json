@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "description": "A person mentioned in a piece of text.",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Full name of the person."
+    },
+    "age": {
+      "type": "integer",
+      "description": "Age in years, if stated.",
+      "minimum": 0
+    },
+    "occupation": {
+      "type": "string",
+      "description": "Their job or role, if mentioned."
+    },
+    "role": {
+      "type": "string",
+      "enum": ["admin", "user", "guest"],
+      "description": "Account role, if this is about a system user."
+    },
+    "skills": {
+      "type": "array",
+      "description": "Any skills or technologies associated with the person.",
+      "items": { "type": "string" }
+    },
+    "address": {
+      "type": "object",
+      "description": "Where the person lives, if mentioned.",
+      "properties": {
+        "city": { "type": "string" },
+        "country": { "type": "string" }
+      },
+      "required": ["city"]
+    }
+  },
+  "required": ["name"]
+}

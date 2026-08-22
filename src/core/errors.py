@@ -45,6 +45,35 @@ class FormatError(GatewayError):
     error_type = ErrorType.FORMAT_ERROR
 
 
+# ---------------------------------------------------------------------------
+# Structured-extraction errors (src/structured/).
+#
+# All three are FORMAT_ERROR as far as the JSONL log / five-category
+# taxonomy is concerned (they're all "the request or the model's output was
+# malformed" in one way or another), but they're distinct Python classes so
+# the CLI and callers can tell *which kind* of malformedness occurred:
+#   SchemaError         -> the --schema file isn't valid JSON Schema at all
+#   UnsupportedSchemaError -> it IS valid JSON Schema, but uses a feature
+#                             outside the gateway's supported subset
+#   ExtractionError      -> the schema was fine; the model's output never
+#                            became valid JSON matching it, even after retries
+# ---------------------------------------------------------------------------
+
+
+class SchemaError(FormatError):
+    """The provided JSON Schema document is not valid JSON Schema."""
+
+
+class UnsupportedSchemaError(FormatError):
+    """Valid JSON Schema, but it uses features outside the supported subset
+    (see src/structured/schema.py for exactly what's supported)."""
+
+
+class ExtractionError(FormatError):
+    """The model's output could not be turned into JSON, or failed schema
+    validation, after all retry attempts were exhausted."""
+
+
 class ModelError(GatewayError):
     error_type = ErrorType.MODEL_ERROR
 

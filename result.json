@@ -1,0 +1,15 @@
+{
+  "name": "Ada Lovelace",
+  "age": 36,
+  "occupation": "mathematician and writer",
+  "role": null,
+  "skills": [
+    "mathematics",
+    "analytical reasoning",
+    "early algorithm design"
+  ],
+  "address": {
+    "city": "London",
+    "country": "England"
+  }
+}
