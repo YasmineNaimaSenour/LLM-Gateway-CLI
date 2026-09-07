@@ -1,4 +1,12 @@
-"""Structured-output extraction: text + Pydantic model -> validated dict."""
+"""Structured-output coercion: messages + JSON Schema -> validated dict.
+
+`coerce_to_schema()` is the shared primitive: given an in-progress
+conversation and a schema, it validates the model's answer against the
+schema and retries (feeding the validation error back to the model) until
+it succeeds or `max_retries` is exhausted. Both the standalone `extract()`
+(text -> JSON, used by the `structured` CLI command) and the orchestrator's
+chat+`--schema` path build on this one implementation.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +18,7 @@ from typing import Any, List, Optional
 from pydantic import ValidationError
 
 from ..core.errors import ExtractionError
-from ..providers.base import BaseProvider, ChatMessage
+from ..providers.base import BaseProvider, ChatMessage, ChatResponse
 from .model_builder import build_model
 
 DEFAULT_MAX_RETRIES = 2
@@ -22,6 +30,14 @@ ONLY a single JSON object that matches the following JSON Schema exactly.
 Do not include prose, explanations, or markdown code fences — output raw
 JSON and nothing else. Omit no required field. Use `null` for optional
 fields you cannot find in the text.
+
+JSON Schema:
+{schema_json}"""
+
+_CHAT_SCHEMA_SYSTEM_TEMPLATE = """Once you are ready to give your final answer (after using any tools, if
+needed), respond with ONLY a single JSON object that matches the following
+JSON Schema exactly. Do not include prose, explanations, or markdown code
+fences in your final answer — output raw JSON and nothing else.
 
 JSON Schema:
 {schema_json}"""
@@ -49,39 +65,55 @@ class ExtractionResult:
     raw_text: str
 
 
-def extract(
+def schema_instruction_message(schema: dict) -> ChatMessage:
+    """Build the system message that instructs a *chat* conversation to give
+    a schema-conforming final answer. Distinct wording from the extraction
+    prompt above: this one is for a general chat turn (optionally after a
+    tool-calling loop), not for extracting from a fixed block of text."""
+    return ChatMessage(
+        role="system",
+        content=_CHAT_SCHEMA_SYSTEM_TEMPLATE.format(schema_json=json.dumps(schema, indent=2)),
+    )
+
+
+def coerce_to_schema(
     provider: BaseProvider,
-    text: str,
+    messages: List[ChatMessage],
     schema: dict,
     *,
     temperature: float = 0.0,
     max_tokens: int = 512,
     max_retries: int = DEFAULT_MAX_RETRIES,
+    model_name: str = "ExtractedData",
+    initial_response: Optional[ChatResponse] = None,
 ) -> ExtractionResult:
-    """Run the full extraction pipeline against an already-validated schema.
+    """Validate-and-retry loop shared by `extract()` and the chat+schema path.
 
     `schema` must already have passed `schema.load_and_validate_schema()` —
     this function does not re-check schema validity, only model output.
+
+    If `initial_response` is given, it is used as the first attempt instead
+    of issuing a fresh `provider.chat()` call (used when the caller already
+    has a tool-free response in hand, e.g. at the end of a tool-calling
+    loop) — every retry beyond that still calls the provider fresh.
 
     Raises `ExtractionError` if the model never produces schema-valid JSON
     within `max_retries` retries (`GatewayError`s raised by the provider
     itself, e.g. rate limits, propagate unchanged so they keep their
     original classification).
     """
-    model = build_model(schema, model_name="ExtractedData")
-    schema_json = json.dumps(schema, indent=2)
-
-    messages: List[ChatMessage] = [
-        ChatMessage(role="system", content=_SYSTEM_PROMPT_TEMPLATE.format(schema_json=schema_json)),
-        ChatMessage(role="user", content=text),
-    ]
+    model = build_model(schema, model_name=model_name)
 
     last_error: Optional[str] = None
     last_raw = ""
     total_attempts = max_retries + 1
+    response = initial_response
 
     for attempt in range(1, total_attempts + 1):
-        response = provider.chat(messages, temperature=temperature, max_tokens=max_tokens)
+        if response is None:
+            response = provider.chat(
+                messages, temperature=temperature, max_tokens=max_tokens, response_schema=schema
+            )
         last_raw = response.text
 
         parsed = _extract_json_value(response.text)
@@ -107,11 +139,34 @@ def extract(
             messages.append(
                 ChatMessage(role="user", content=_RETRY_TEMPLATE.format(previous=response.text, error=last_error))
             )
+            response = None  # force a fresh call on the next attempt
 
     raise ExtractionError(
         f"Model output did not satisfy the schema after {total_attempts} attempt(s): {last_error}\n"
         f"Last raw response: {last_raw!r}",
         provider=provider.name,
+    )
+
+
+def extract(
+    provider: BaseProvider,
+    text: str,
+    schema: dict,
+    *,
+    temperature: float = 0.0,
+    max_tokens: int = 512,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+) -> ExtractionResult:
+    """Extract structured data from a fixed block of text (the `structured`
+    CLI command). Thin wrapper: builds the extraction-specific system/user
+    messages and delegates to `coerce_to_schema()`."""
+    schema_json = json.dumps(schema, indent=2)
+    messages: List[ChatMessage] = [
+        ChatMessage(role="system", content=_SYSTEM_PROMPT_TEMPLATE.format(schema_json=schema_json)),
+        ChatMessage(role="user", content=text),
+    ]
+    return coerce_to_schema(
+        provider, messages, schema, temperature=temperature, max_tokens=max_tokens, max_retries=max_retries
     )
 
 

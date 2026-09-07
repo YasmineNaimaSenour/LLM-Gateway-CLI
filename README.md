@@ -1,7 +1,8 @@
 # LLM Gateway CLI
 
 Provider-agnostic CLI gateway over **Ollama** (local) and **Groq** (hosted),
-built as a single entry point for experimentation and benchmarking of LLMs.
+built as a provider-agnostic LLM gateway for experimentation, structured
+generation, tool calling, and eventually evaluation of LLM workloads.
 
 ## Setup
 
@@ -173,10 +174,56 @@ python -m src.cli chat --provider groq --model openai/gpt-oss-20b \
     --temperature 0.2 --max-tokens 200 --stream
 ```
 
+### Structured output during chat
+
+Add `--schema` to a normal `chat` call to force the final answer to
+conform to a JSON Schema. Reuses the same schema file format (and the same
+validate-and-retry loop) as the `structured` command below, so the schemas
+in `examples/structured/` work here too:
+
+```bash
+python -m src.cli chat --provider groq \
+    --prompt "Ada Lovelace, 36, mathematician and writer, based in London, England." \
+    --schema examples/structured/person_schema.json
+```
+
+Where possible the schema is also passed to the provider as a native hint
+(Ollama gets grammar-constrained decoding via its `format` field; Groq gets
+`response_format: json_object`) to cut down on retries — but the result is
+always validated and retried gateway-side regardless, so behavior is
+identical across providers even though reliability under the hood differs.
+
+### Tool calling
+
+Add `--tools` (comma-separated names) to let the model call functions
+mid-conversation. The gateway runs the request/response loop — sending the
+tools, executing whichever ones the model calls, feeding results back —
+until the model gives a final, tool-free answer or `--max-tool-iterations`
+(default `8`) is hit:
+
+```bash
+python -m src.cli chat --provider ollama \
+    --prompt "What's 40 + 2? Also, what time is it in Tokyo?" \
+    --tools calculator,current_time
+```
+
+Built-in tools live in `src/tools/registry.py` (currently `calculator` and
+`current_time`) — it's a small, explicit, in-repo registry rather than a
+plugin system; add a tool by writing a Pydantic model for its arguments and
+decorating a function with `@register(...)`.
+
+`--tools` and `--schema` can be combined: the model uses tools as needed,
+then its final answer is validated against the schema. `--stream` is
+ignored (with a one-line notice on stderr) whenever `--tools` or `--schema`
+are set — tool-bearing and schema-coerced turns are always non-streaming.
+
 ### Structured extraction
 
 `gateway structured` extracts structured data from arbitrary text using a
-JSON Schema you supply — no code, just a schema file:
+JSON Schema you supply — no code, just a schema file. Unlike `chat
+--schema` above, it takes input from a file rather than a live prompt and
+never uses tools; internally both share the same validation/retry core
+(`structured/extractor.py`):
 
 ```text
 input text + JSON Schema → validate schema → convert schema to a Pydantic model
@@ -273,26 +320,43 @@ by exception type for callers that care.
 * Switches between providers behind one `BaseProvider` interface (`src/providers/`)
 * Supports both streaming and non-streaming chat responses
 * Extracts structured data from text against a user-supplied JSON Schema
-  (`gateway structured`), reusing the same `BaseProvider.chat()` call as
-  `chat` — no separate HTTP client or provider-specific code path
+  (`gateway structured`), or enforces a schema on a live `chat` answer
+  (`chat --schema`) — both go through the same validate-and-retry core
+  (`structured/extractor.py`), not two separate implementations
+* Runs a tool-calling loop (`chat --tools`): offers tools to the model,
+  executes whichever ones it calls via an in-repo registry
+  (`src/tools/`), and feeds results back until it gets a final answer
+* Uses native provider capabilities where available (Ollama's
+  schema-constrained `format` decoding, Groq's `json_object` mode) as a
+  reliability optimization — gateway-side validation still always runs,
+  so behavior stays identical across providers
 * Counts input tokens before every request (via `tiktoken`, falling back to a heuristic)
 * Measures request latency
 * Never crashes: every failure is classified into `rate_limit | context | format | model | unknown`
   and logged, with a friendly message on stderr and a non-zero exit code
-* Appends one structured JSON record per request to `logs/requests.jsonl`
+* Appends one structured JSON record per request to `logs/requests.jsonl`,
+  including tool-call counts when `--tools` was used
 
 ## Repository layout
 
 ```text
 src/
 ├── providers/        # base.py (interface) + ollama_provider.py + groq_provider.py
-├── core/              # errors.py (taxonomy), logger.py (JSONL), telemetry.py (timing)
+├── core/
+│   ├── types.py          # provider-agnostic ToolSpec / ToolCall / ToolResult
+│   ├── orchestrator.py    # run_turn(): the tool-call loop + schema coercion, shared by chat & structured
+│   ├── errors.py          # five-category error taxonomy
+│   ├── logger.py          # JSONL request logging
+│   └── telemetry.py       # request timing
 ├── structured/        # JSON Schema -> Pydantic -> validated extraction (see above)
 │   ├── schema.py         # load + meta-validate + supported-subset check
 │   ├── model_builder.py  # JSON Schema (subset) -> Pydantic model (internal detail)
-│   └── extractor.py      # prompt -> parse -> validate -> retry, via BaseProvider.chat()
+│   └── extractor.py      # coerce_to_schema(): validate -> retry loop, via BaseProvider.chat()
+├── tools/             # in-repo tool registry + executor (not a plugin system)
+│   ├── registry.py        # @register-decorated tools (calculator, current_time, ...)
+│   └── executor.py        # runs a ToolCall, never raises past itself
 ├── token_utils.py     # pre-request token counting
-└── cli.py             # entry point / orchestration (chat + structured subcommands)
+└── cli.py             # entry point / argument parsing + I/O only (chat + structured subcommands)
 examples/
 └── structured/        # sample schema + input text used in the docs above
 experiments/           # sampling variance, context behavior, and failure-case logs

@@ -4,7 +4,11 @@ Each call to log_request() appends exactly one JSON object (one line) to
 the log file, matching the schema required by the project spec:
 
     timestamp, provider, latency_ms, tokens_in, tokens_out,
-    temperature, status, error_type
+    temperature, status, error_type, tool_calls, tool_iterations
+
+`tool_calls` / `tool_iterations` are additive (M2): total tool invocations
+and tool-loop round-trips for the request, or None when tool calling
+wasn't involved at all.
 """
 
 from __future__ import annotations
@@ -27,6 +31,8 @@ def log_request(
     temperature: float,
     status: str,
     error_type: Optional[str] = None,
+    tool_calls: Optional[int] = None,
+    tool_iterations: Optional[int] = None,
     log_path: Path = DEFAULT_LOG_PATH,
 ) -> dict:
     """Append one structured JSON record for a request and return it.
@@ -44,6 +50,8 @@ def log_request(
         "temperature": temperature,
         "status": status,
         "error_type": error_type,
+        "tool_calls": tool_calls,
+        "tool_iterations": tool_iterations,
     }
 
     log_path = Path(log_path)

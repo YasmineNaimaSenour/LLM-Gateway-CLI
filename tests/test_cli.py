@@ -2,6 +2,8 @@ import json
 from unittest.mock import MagicMock, patch
 
 from src.cli import main
+from src.core.types import ToolCall
+from src.providers.base import ChatResponse
 
 SCHEMA = {
     "type": "object",
@@ -145,6 +147,49 @@ def test_cli_structured_missing_input_file_reports_error(mock_log_request, tmp_p
 
     assert exit_code == 1
     assert mock_log_request.call_args.kwargs["status"] == "error"
+
+
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
+def test_cli_chat_with_schema_prints_validated_json(mock_build_provider, mock_log_request, tmp_path):
+    schema_path = _write(tmp_path, "schema.json", SCHEMA)
+    mock_provider = mock_build_provider.return_value
+    mock_provider.name = "ollama"
+    mock_provider.chat.return_value = ChatResponse(text='{"name": "Bob", "age": 30}', tokens_out=8)
+
+    exit_code = main(["chat", "--provider", "ollama", "--prompt", "hi", "--schema", schema_path])
+
+    assert exit_code == 0
+    assert mock_log_request.call_args.kwargs["status"] == "success"
+
+
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
+def test_cli_chat_with_tools_executes_calculator_and_returns_final_answer(mock_build_provider, mock_log_request, capsys):
+    mock_provider = mock_build_provider.return_value
+    mock_provider.name = "ollama"
+    tool_call = ToolCall(id="1", name="calculator", arguments={"a": 40, "b": 2, "operation": "add"})
+    mock_provider.chat.side_effect = [
+        ChatResponse(text="", tokens_out=5, tool_calls=[tool_call]),
+        ChatResponse(text="It's 42.", tokens_out=4, tool_calls=[]),
+    ]
+
+    exit_code = main(["chat", "--provider", "ollama", "--prompt", "what is 40+2?", "--tools", "calculator"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == "It's 42."
+    assert mock_log_request.call_args.kwargs["tool_calls"] == 1
+    assert mock_log_request.call_args.kwargs["tool_iterations"] == 1
+
+
+@patch("src.cli.log_request")
+def test_cli_chat_unknown_tool_reports_error_without_calling_provider(mock_log_request):
+    with patch("src.cli.build_provider") as mock_build_provider:
+        exit_code = main(["chat", "--provider", "ollama", "--prompt", "hi", "--tools", "not_a_real_tool"])
+        mock_build_provider.assert_not_called()
+
+    assert exit_code == 1
+    assert mock_log_request.call_args.kwargs["error_type"] == "format"
 
 
 @patch("src.cli.log_request")

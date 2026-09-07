@@ -8,27 +8,40 @@ logging layer never need to know which provider is behind the interface.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Iterator, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterator, List, Optional
+
+from ..core.types import ToolCall, ToolSpec
 
 
 @dataclass
 class ChatMessage:
-    """A single message in the conversation."""
+    """A single message in the conversation.
 
-    role: str  # "system" | "user" | "assistant"
-    content: str
+    `tool_calls` is only ever set on assistant messages (the model
+    requesting tool invocations). `tool_call_id` and `name` are only ever
+    set on "tool" messages (a tool's result being reported back — id ties
+    it to the request, name is the tool's name, needed by providers whose
+    wire format identifies tool results by name rather than by id).
+    """
+
+    role: str  # "system" | "user" | "assistant" | "tool"
+    content: Optional[str] = None
+    tool_calls: Optional[List[ToolCall]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
 
     def to_dict(self) -> dict:
-        return {"role": self.role, "content": self.content}
+        return {"role": self.role, "content": self.content or ""}
 
 
 @dataclass
 class ChatResponse:
-    """Final, fully-assembled response (used only for both the sync path)."""
+    """Final, fully-assembled response for one non-streaming call."""
 
     text: str
     tokens_out: int
+    tool_calls: List[ToolCall] = field(default_factory=list)
     raw: Optional[dict] = None
 
 
@@ -47,8 +60,18 @@ class BaseProvider(ABC):
         *,
         temperature: float = 0.7,
         max_tokens: int = 512,
+        tools: Optional[List[ToolSpec]] = None,
+        response_schema: Optional[Dict[str, Any]] = None,
     ) -> ChatResponse:
-        """Non-streaming call. Blocks until the full response is available."""
+        """Non-streaming call. Blocks until the full response is available.
+
+        `tools`, when given, are offered to the model; a resulting
+        ChatResponse.tool_calls is empty when the model didn't call any.
+        `response_schema` is a best-effort hint: providers that support
+        native schema-constrained or JSON-mode decoding should use it to
+        improve reliability, but callers must still validate the result
+        themselves — this is never a substitute for that.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -59,5 +82,12 @@ class BaseProvider(ABC):
         temperature: float = 0.7,
         max_tokens: int = 512,
     ) -> Iterator[str]:
-        """Streaming call. Yields text chunks as they arrive from the provider."""
+        """Streaming call. Yields text chunks as they arrive from the provider.
+
+        Deliberately has no `tools` parameter: tool-bearing turns are always
+        non-streaming (see core/orchestrator.py) since the two providers
+        stream tool-call payloads in incompatible shapes, and there is
+        little user-facing value in streaming a turn that may not even
+        contain the final answer.
+        """
         raise NotImplementedError

@@ -1,9 +1,14 @@
 from src.core.errors import (
     ErrorType,
     RateLimitError,
+    ToolLoopError,
     classify_exception,
     to_gateway_error,
 )
+
+
+def test_tool_loop_error_is_a_format_error():
+    assert ToolLoopError("stuck").error_type == ErrorType.FORMAT_ERROR
 
 
 def test_classify_rate_limit_by_status_code():

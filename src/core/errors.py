@@ -74,6 +74,13 @@ class ExtractionError(FormatError):
     validation, after all retry attempts were exhausted."""
 
 
+class ToolLoopError(FormatError):
+    """The model kept calling tools past `max_tool_iterations` without ever
+    producing a final, tool-free answer. Distinct from ExtractionError:
+    that one bounds schema-correction retries on a final answer, this one
+    bounds tool-call round-trips — different loops, different knobs."""
+
+
 class ModelError(GatewayError):
     error_type = ErrorType.MODEL_ERROR
 

@@ -12,6 +12,12 @@ Usage:
     python -m src.cli structured --provider groq --input notes.txt --schema person.json \
         --output result.json --max-retries 3
 
+    # M2: structured output and/or tool calling during chat
+    python -m src.cli chat --provider groq --prompt "Summarize this release" \
+        --schema examples/structured/release_notes_schema.json
+    python -m src.cli chat --provider ollama --prompt "42 * 17? Also, time in Tokyo?" \
+        --tools calculator,current_time
+
 Every call — success or failure — writes one structured JSONL record to
 logs/requests.jsonl and never raises past main(): errors are caught,
 classified, logged, and reported to stderr with a non-zero exit code.
@@ -27,13 +33,17 @@ from typing import List, Optional
 
 from .core.errors import FormatError, GatewayError, to_gateway_error
 from .core.logger import log_request
+from .core.orchestrator import DEFAULT_MAX_TOOL_ITERATIONS, run_turn
 from .core.telemetry import Timer
 from .providers.base import BaseProvider, ChatMessage
 from .providers.groq_provider import GroqProvider
 from .providers.ollama_provider import OllamaProvider
 from .structured.extractor import extract as run_extraction
+from .structured.extractor import schema_instruction_message
 from .structured.schema import load_and_validate_schema
 from .token_utils import count_message_tokens, count_tokens
+from .tools.executor import ToolExecutor
+from .tools.registry import get_tools
 
 DEFAULT_MODELS = {
     "ollama": "llama3.2",
@@ -66,6 +76,31 @@ def _add_chat_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--max-tokens", type=int, default=512, dest="max_tokens")
     parser.add_argument("--stream", action="store_true", help="Stream the response token-by-token.")
+    parser.add_argument(
+        "--tools",
+        default=None,
+        help="Comma-separated tool names to expose to the model (see src/tools/registry.py).",
+    )
+    parser.add_argument(
+        "--max-tool-iterations",
+        type=int,
+        default=DEFAULT_MAX_TOOL_ITERATIONS,
+        dest="max_tool_iterations",
+        help="Max tool-call round-trips before giving up (only relevant with --tools).",
+    )
+    parser.add_argument(
+        "--schema",
+        default=None,
+        dest="schema_path",
+        help="Path to a JSON Schema file the final answer must conform to.",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=2,
+        dest="max_retries",
+        help="Retries on unparsable/invalid final answer before giving up (only relevant with --schema).",
+    )
 
 
 def _add_structured_arguments(parser: argparse.ArgumentParser) -> None:
@@ -116,10 +151,16 @@ def build_provider(provider_name: str, model: Optional[str]) -> BaseProvider:
     raise ValueError(f"Unknown provider: {provider_name}")  # unreachable: argparse restricts choices
 
 
-def build_messages(system: Optional[str], prompt: str) -> List[ChatMessage]:
+def _split_tool_names(raw: str) -> List[str]:
+    return [name.strip() for name in raw.split(",") if name.strip()]
+
+
+def build_messages(system: Optional[str], prompt: str, schema: Optional[dict] = None) -> List[ChatMessage]:
     messages: List[ChatMessage] = []
     if system:
         messages.append(ChatMessage(role="system", content=system))
+    if schema is not None:
+        messages.append(schema_instruction_message(schema))
     messages.append(ChatMessage(role="user", content=prompt))
     return messages
 
@@ -164,18 +205,51 @@ def _log_and_report(exc: GatewayError, args: argparse.Namespace, tokens_in: int,
     )
     # error_type keeps the 5-category log taxonomy; the class name gives the
     # sharper distinction (e.g. SchemaError vs UnsupportedSchemaError vs
-    # ExtractionError) without changing what gets logged.
+    # ExtractionError vs ToolLoopError) without changing what gets logged.
     print(f"[{exc.error_type.value}:{type(exc).__name__}] {exc}", file=sys.stderr)
 
 
 def _main_chat(args: argparse.Namespace) -> int:
-    messages = build_messages(args.system, args.prompt)
-    tokens_in = count_message_tokens([m.to_dict() for m in messages])
-
     timer = Timer().start()
+    tokens_in = 0
+    tool_call_count: Optional[int] = None
+    tool_iterations: Optional[int] = None
     try:
+        schema = load_and_validate_schema(args.schema_path) if args.schema_path else None
+        registered_tools = get_tools(_split_tool_names(args.tools)) if args.tools else None
+
+        messages = build_messages(args.system, args.prompt, schema=schema)
+        tokens_in = count_message_tokens([m.to_dict() for m in messages])
+
         provider = build_provider(args.provider, args.model)
-        tokens_out = _run_stream(provider, messages, args) if args.stream else _run_sync(provider, messages, args)
+
+        if registered_tools or schema is not None:
+            if args.stream:
+                print(
+                    "Note: --stream is ignored when --tools or --schema are set; "
+                    "showing the full response once it's ready.",
+                    file=sys.stderr,
+                )
+            result = run_turn(
+                provider,
+                messages,
+                tools=[t.spec for t in registered_tools] if registered_tools else None,
+                tool_executor=ToolExecutor(registered_tools) if registered_tools else None,
+                response_schema=schema,
+                max_tool_iterations=args.max_tool_iterations,
+                max_retries=args.max_retries,
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+            )
+            tokens_out = result.tokens_out
+            tool_call_count = result.tool_call_count
+            tool_iterations = result.tool_iterations
+            if schema is not None:
+                print(json.dumps(result.data, indent=2, ensure_ascii=False))
+            else:
+                print(result.text)
+        else:
+            tokens_out = _run_stream(provider, messages, args) if args.stream else _run_sync(provider, messages, args)
     except GatewayError as exc:
         timer.stop()
         _log_and_report(exc, args, tokens_in, timer.elapsed_ms)
@@ -195,6 +269,8 @@ def _main_chat(args: argparse.Namespace) -> int:
         temperature=args.temperature,
         status="success",
         error_type=None,
+        tool_calls=tool_call_count,
+        tool_iterations=tool_iterations,
     )
     return 0
 

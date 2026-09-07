@@ -3,7 +3,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.core.errors import ExtractionError
-from src.structured.extractor import extract
+from src.providers.base import ChatMessage, ChatResponse
+from src.structured.extractor import coerce_to_schema, extract, schema_instruction_message
 
 SCHEMA = {
     "type": "object",
@@ -91,3 +92,40 @@ def test_extract_passes_temperature_and_max_tokens_through_to_provider():
     _, kwargs = provider.chat.call_args
     assert kwargs["temperature"] == 0.2
     assert kwargs["max_tokens"] == 256
+
+
+def test_extract_forwards_schema_as_native_response_schema_hint():
+    provider = _mock_provider('{"name": "Bob", "age": 30}')
+    extract(provider, "text", SCHEMA)
+    _, kwargs = provider.chat.call_args
+    assert kwargs["response_schema"] == SCHEMA
+
+
+def test_coerce_to_schema_reuses_initial_response_without_an_extra_call():
+    provider = _mock_provider('{"name": "Bob", "age": 30}')
+    messages = [ChatMessage(role="user", content="hi")]
+    initial = ChatResponse(text='{"name": "Bob", "age": 30}', tokens_out=6)
+
+    result = coerce_to_schema(provider, messages, SCHEMA, initial_response=initial)
+
+    assert result.data == {"name": "Bob", "age": 30}
+    assert result.attempts == 1
+    provider.chat.assert_not_called()  # the reused response was enough
+
+
+def test_coerce_to_schema_falls_back_to_a_fresh_call_when_initial_response_is_invalid():
+    provider = _mock_provider('{"name": "Bob", "age": 30}')
+    messages = [ChatMessage(role="user", content="hi")]
+    initial = ChatResponse(text="not json at all", tokens_out=3)
+
+    result = coerce_to_schema(provider, messages, SCHEMA, initial_response=initial, max_retries=1)
+
+    assert result.data == {"name": "Bob", "age": 30}
+    assert result.attempts == 2
+    assert provider.chat.call_count == 1  # only the retry needed a fresh call
+
+
+def test_schema_instruction_message_is_a_system_message_mentioning_the_schema():
+    message = schema_instruction_message(SCHEMA)
+    assert message.role == "system"
+    assert '"age"' in message.content
