@@ -53,10 +53,50 @@ def test_run_turn_executes_tool_calls_then_returns_final_answer():
     assert result.tool_iterations == 1
     assert result.tokens_out == 9
     assert provider.chat.call_count == 2
-    # an assistant (tool_calls) message and a tool (result) message were appended
-    assert messages[-2].role == "assistant"
-    assert messages[-1].role == "tool"
-    assert messages[-1].content == "3.0"
+    # the returned transcript holds: user, assistant (tool_calls), tool result,
+    # then the final assistant answer
+    transcript = result.messages
+    assert transcript[-3].role == "assistant"
+    assert transcript[-2].role == "tool"
+    assert transcript[-2].content == "3.0"
+    assert transcript[-1].role == "assistant"
+    assert transcript[-1].content == "The result is 3."
+
+
+def test_run_turn_never_mutates_the_callers_messages_list():
+    provider = _provider(ChatResponse(text="hello back", tokens_out=5))
+    messages = _messages()
+
+    result = run_turn(provider, messages)
+
+    assert messages == [ChatMessage(role="user", content="hi")]
+    assert result.messages is not messages
+    assert result.messages == [ChatMessage(role="user", content="hi"), ChatMessage(role="assistant", content="hello back")]
+
+
+def test_reusing_returned_messages_for_a_second_turn_does_not_double_history():
+    provider = _provider(ChatResponse(text="first reply", tokens_out=2), ChatResponse(text="second reply", tokens_out=2))
+
+    first = run_turn(provider, _messages())
+    second = run_turn(provider, first.messages)
+
+    assert provider.chat.call_count == 2
+    # second call saw exactly the first turn's transcript — not a stale or doubled copy
+    second_call_messages = provider.chat.call_args_list[1][0][0]
+    assert [m.content for m in second_call_messages] == ["hi", "first reply"]
+    assert [m.content for m in second.messages] == ["hi", "first reply", "second reply"]
+
+
+def test_run_turn_appends_final_schema_valid_answer_to_returned_messages():
+    provider = _provider(
+        ChatResponse(text="not json at all", tokens_out=3),
+        ChatResponse(text='{"name": "Bob", "age": 30}', tokens_out=6),
+    )
+    result = run_turn(provider, _messages(), response_schema=SCHEMA, max_retries=1)
+
+    transcript = result.messages
+    assert transcript[-1].role == "assistant"
+    assert transcript[-1].content == '{"name": "Bob", "age": 30}'
 
 
 def test_run_turn_raises_tool_loop_error_past_max_iterations():

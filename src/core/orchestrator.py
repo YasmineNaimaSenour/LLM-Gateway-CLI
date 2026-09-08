@@ -32,6 +32,10 @@ class OrchestrationResult:
     tool_call_count: int
     tool_iterations: int
     attempts: int
+    # Complete transcript for the turn (caller's input + every assistant/tool
+    # message added during it, including the final answer). Feed it back as
+    # `messages` for the next turn to continue the conversation.
+    messages: List[ChatMessage]
 
 
 def run_turn(
@@ -49,11 +53,19 @@ def run_turn(
     """Run one full turn: an optional tool-calling loop, then an optional
     schema-coercion step on the final, tool-free answer.
 
-    `messages` is mutated in place (assistant/tool messages are appended as
-    the loop progresses) — pass a list you're happy to see grow.
+    `messages` is never mutated: the turn runs on an internal copy, and the
+    complete transcript (the caller's messages plus every assistant/tool
+    message appended during the turn, including the final answer) is
+    returned as `OrchestrationResult.messages`. Reuse that list — not the
+    one you passed in — to continue the conversation in a follow-up turn.
     """
     if tools and tool_executor is None:
         raise ValueError("tool_executor is required when tools are provided")
+
+    # Copy-on-entry: work on our own list so a caller reusing their list
+    # across turns can't get doubled-up history. A shallow copy suffices —
+    # ChatMessage instances are treated as immutable value objects.
+    messages = list(messages)
 
     tokens_out = 0
     tool_call_count = 0
@@ -62,7 +74,9 @@ def run_turn(
 
     if tools:
         for _ in range(max_tool_iterations):
-            response = provider.chat(messages, temperature=temperature, max_tokens=max_tokens, tools=tools)
+            # Snapshot per call: the provider sees the conversation exactly as
+            # it was at call time, even though `messages` keeps growing after.
+            response = provider.chat(list(messages), temperature=temperature, max_tokens=max_tokens, tools=tools)
             if not response.tool_calls:
                 break  # tool-free final turn — fall through to schema handling below
 
@@ -94,6 +108,10 @@ def run_turn(
             max_retries=max_retries,
             initial_response=response,
         )
+        # Record the final answer so the returned transcript is complete;
+        # otherwise a caller continuing the conversation would silently
+        # lose the model's last word.
+        messages.append(ChatMessage(role="assistant", content=extraction.raw_text or None))
         return OrchestrationResult(
             text=extraction.raw_text,
             data=extraction.data,
@@ -101,11 +119,13 @@ def run_turn(
             tool_call_count=tool_call_count,
             tool_iterations=tool_iterations,
             attempts=extraction.attempts,
+            messages=messages,
         )
 
     if response is None:
-        response = provider.chat(messages, temperature=temperature, max_tokens=max_tokens)
+        response = provider.chat(list(messages), temperature=temperature, max_tokens=max_tokens)
     tokens_out += response.tokens_out
+    messages.append(ChatMessage(role="assistant", content=response.text or None))
 
     return OrchestrationResult(
         text=response.text,
@@ -114,4 +134,5 @@ def run_turn(
         tool_call_count=tool_call_count,
         tool_iterations=tool_iterations,
         attempts=1,
+        messages=messages,
     )

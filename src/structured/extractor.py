@@ -92,6 +92,12 @@ def coerce_to_schema(
     `schema` must already have passed `schema.load_and_validate_schema()` —
     this function does not re-check schema validity, only model output.
 
+    Unlike the orchestrator's `run_turn()` (which copies), this function
+    mutates the `messages` list it is given: each failed attempt appends the
+    invalid assistant response plus a corrective user message so the retry
+    call has the failure in context. Callers pass their own working copy if
+    they need the input list untouched.
+
     If `initial_response` is given, it is used as the first attempt instead
     of issuing a fresh `provider.chat()` call (used when the caller already
     has a tool-free response in hand, e.g. at the end of a tool-calling
@@ -111,8 +117,11 @@ def coerce_to_schema(
 
     for attempt in range(1, total_attempts + 1):
         if response is None:
+            # Snapshot per call: the provider sees the conversation exactly as
+            # it was at call time, even though retry appends keep mutating
+            # `messages` between attempts.
             response = provider.chat(
-                messages, temperature=temperature, max_tokens=max_tokens, response_schema=schema
+                list(messages), temperature=temperature, max_tokens=max_tokens, response_schema=schema
             )
         last_raw = response.text
 
