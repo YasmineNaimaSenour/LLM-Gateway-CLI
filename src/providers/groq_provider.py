@@ -27,6 +27,7 @@ from ..core.errors import FormatError, ModelError, to_gateway_error
 from ..core.types import ToolCall, ToolSpec
 from ..token_utils import count_tokens
 from .base import BaseProvider, ChatMessage, ChatResponse
+from .http_utils import post_with_retry
 from .registry import register_provider
 
 load_dotenv()
@@ -103,7 +104,16 @@ class GroqProvider(BaseProvider):
 
     def _post(self, payload: dict, *, stream: bool) -> requests.Response:
         try:
-            return requests.post(GROQ_API_URL, headers=self._headers(), json=payload, timeout=self.timeout, stream=stream)
+            # post_with_retry owns the should-I-retry decision for transient
+            # failures (connection blips, 5xx); exhaustion re-raises, and the
+            # handlers below stay responsible for how the failure is presented.
+            return post_with_retry(
+                GROQ_API_URL,
+                payload=payload,
+                headers=self._headers(),
+                timeout=self.timeout,
+                stream=stream,
+            )
         except requests.exceptions.ConnectionError as exc:
             raise ModelError("Could not reach the Groq API. Check your network connection.", provider=self.name, cause=exc)
         except requests.exceptions.Timeout as exc:

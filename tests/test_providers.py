@@ -33,13 +33,30 @@ def test_ollama_chat_success(mock_post):
     assert response.tokens_out > 0
 
 
+@patch("src.providers.http_utils.time.sleep")
 @patch("src.providers.ollama_provider.requests.post")
-def test_ollama_connection_error_maps_to_model_error(mock_post):
+def test_ollama_connection_error_maps_to_model_error(mock_post, mock_sleep):
+    # post_with_retry retries the connection error before giving up; the
+    # patched sleep keeps the backoff off the clock in tests.
     mock_post.side_effect = requests.exceptions.ConnectionError("refused")
 
     provider = OllamaProvider(model="llama3.2")
     with pytest.raises(ModelError):
         provider.chat(_msg())
+    assert mock_post.call_count == 3  # initial attempt + 2 retries
+
+
+@patch("src.providers.http_utils.time.sleep")
+@patch("src.providers.ollama_provider.requests.post")
+def test_ollama_retries_transient_503_then_succeeds(mock_post, mock_sleep):
+    ok = MagicMock(status_code=200)
+    ok.json.return_value = {"message": {"content": "recovered"}}
+    mock_post.side_effect = [MagicMock(status_code=503), ok]
+
+    provider = OllamaProvider(model="llama3.2")
+    response = provider.chat(_msg())
+    assert response.text == "recovered"
+    assert mock_post.call_count == 2
 
 
 @patch("src.providers.ollama_provider.requests.post")

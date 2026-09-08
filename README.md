@@ -389,6 +389,10 @@ works, with `--model` defaulting to `my-model-7b` when not given.
   so behavior stays identical across providers
 * Counts input tokens before every request (via `tiktoken`, falling back to a heuristic)
 * Measures request latency
+* Retries transient provider failures (connection blips, HTTP 500/502/503/504)
+  with exponential backoff and a stderr notice per retry
+  (`src/providers/http_utils.py`); 429 and other permanent errors are never
+  retried — they already classify and log correctly
 * Never crashes: every failure is classified into `rate_limit | context | format | model | unknown`
   and logged, with a friendly message on stderr and a non-zero exit code
 * Appends one structured JSON record per request to `logs/requests.jsonl`,
@@ -398,7 +402,7 @@ works, with `--model` defaulting to `my-model-7b` when not given.
 
 ```text
 src/
-├── providers/        # base.py (interface) + registry.py + ollama_provider.py + groq_provider.py
+├── providers/        # base.py (interface) + registry.py + http_utils.py (shared retry transport) + ollama_provider.py + groq_provider.py
 ├── core/
 │   ├── types.py          # provider-agnostic ToolSpec / ToolCall / ToolResult
 │   ├── orchestrator.py    # run_turn(): the tool-call loop + schema coercion, shared by chat & structured
