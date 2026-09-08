@@ -29,9 +29,11 @@ from ..core.errors import FormatError, ModelError, to_gateway_error
 from ..core.types import ToolCall, ToolSpec
 from ..token_utils import count_tokens
 from .base import BaseProvider, ChatMessage, ChatResponse
+from .registry import register_provider
 
 load_dotenv()
 
+@register_provider("ollama", default_model="llama3.2")
 class OllamaProvider(BaseProvider):
     name = "ollama"
 

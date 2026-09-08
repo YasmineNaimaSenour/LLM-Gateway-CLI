@@ -41,20 +41,15 @@ from .core.logger import log_request
 from .core.orchestrator import DEFAULT_MAX_TOOL_ITERATIONS, run_turn
 from .core.session import load_session_messages, save_session_messages
 from .core.telemetry import Timer
+from .providers import provider_names
 from .providers.base import BaseProvider, ChatMessage
-from .providers.groq_provider import GroqProvider
-from .providers.ollama_provider import OllamaProvider
+from .providers.registry import get_provider as _registry_get_provider
 from .structured.extractor import extract as run_extraction
 from .structured.extractor import schema_instruction_message
 from .structured.schema import load_and_validate_schema
 from .token_utils import count_message_tokens, count_tokens
 from .tools.executor import ToolExecutor
 from .tools.registry import get_tools
-
-DEFAULT_MODELS = {
-    "ollama": "llama3.2",
-    "groq": "openai/gpt-oss-20b",
-}
 
 _COMMANDS = {"chat", "structured"}
 
@@ -75,7 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_chat_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--provider", choices=["ollama", "groq"], required=True, help="Which backend to use.")
+    parser.add_argument(
+        "--provider",
+        choices=provider_names(),
+        required=True,
+        help="Which backend to use (any registered provider — see src/providers/registry.py).",
+    )
     parser.add_argument("--model", default=None, help="Model name (defaults per-provider).")
     parser.add_argument("--prompt", required=True, help="User prompt.")
     parser.add_argument("--system", default=None, help="Optional system prompt.")
@@ -120,7 +120,12 @@ def _add_chat_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_structured_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--provider", choices=["ollama", "groq"], required=True, help="Which backend to use.")
+    parser.add_argument(
+        "--provider",
+        choices=provider_names(),
+        required=True,
+        help="Which backend to use (any registered provider — see src/providers/registry.py).",
+    )
     parser.add_argument("--model", default=None, help="Model name (defaults per-provider).")
     parser.add_argument(
         "--input", required=True, dest="input_path", help="Path to a text file with the input to extract from."
@@ -159,12 +164,15 @@ def _normalize_argv(argv: List[str]) -> List[str]:
 
 
 def build_provider(provider_name: str, model: Optional[str]) -> BaseProvider:
-    model = model or DEFAULT_MODELS[provider_name]
-    if provider_name == "ollama":
-        return OllamaProvider(model=model)
-    if provider_name == "groq":
-        return GroqProvider(model=model)
-    raise ValueError(f"Unknown provider: {provider_name}")  # unreachable: argparse restricts choices
+    """Resolve a provider by name and instantiate it.
+
+    A thin adapter over the provider registry (src/providers/registry.py):
+    lookup, per-provider model defaulting, and instantiation all live there.
+    Kept as a named function because it's the CLI's single seam for provider
+    construction — tests patch this, and stderr/log handling keys off the
+    args.provider name it's called with.
+    """
+    return _registry_get_provider(provider_name, model)
 
 
 def _split_tool_names(raw: str) -> List[str]:

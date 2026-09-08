@@ -344,9 +344,33 @@ still log under the same five-category taxonomy (`rate_limit | context |
 format | model | unknown`) as everything else — they're just distinguishable
 by exception type for callers that care.
 
+## Adding a provider
+
+Providers are discovered through a registry (`src/providers/registry.py`), not
+hardcoded in the CLI. The registry mirrors the tool registry (`src/tools/registry.py`):
+a provider registers itself at import time and becomes a first-class `--provider`
+choice — argparse choices, model defaulting, instantiation — with zero CLI edits:
+
+```python
+# src/providers/my_provider.py
+from .base import BaseProvider
+from .registry import register_provider
+
+
+@register_provider("myprovider", default_model="my-model-7b")
+class MyProvider(BaseProvider):
+    name = "myprovider"
+    ...
+```
+
+Then make sure the module is imported once (list it in
+`src/providers/__init__.py`, as the built-ins do) and `--provider myprovider`
+works, with `--model` defaulting to `my-model-7b` when not given.
+
 ## What it does
 
-* Switches between providers behind one `BaseProvider` interface (`src/providers/`)
+* Switches between providers behind one `BaseProvider` interface (`src/providers/`);
+  new backends self-register via `@register_provider` (see "Adding a provider" below)
 * Supports both streaming and non-streaming chat responses
 * Extracts structured data from text against a user-supplied JSON Schema
   (`gateway structured`), or enforces a schema on a live `chat` answer
@@ -374,7 +398,7 @@ by exception type for callers that care.
 
 ```text
 src/
-├── providers/        # base.py (interface) + ollama_provider.py + groq_provider.py
+├── providers/        # base.py (interface) + registry.py + ollama_provider.py + groq_provider.py
 ├── core/
 │   ├── types.py          # provider-agnostic ToolSpec / ToolCall / ToolResult
 │   ├── orchestrator.py    # run_turn(): the tool-call loop + schema coercion, shared by chat & structured
