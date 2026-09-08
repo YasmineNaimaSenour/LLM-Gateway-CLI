@@ -12,6 +12,11 @@ Usage:
     python -m src.cli structured --provider groq --input notes.txt --schema person.json \
         --output result.json --max-retries 3
 
+    # multi-turn chat: --session persists the transcript to a JSONL file, so
+    # consecutive calls with the same --session continue one conversation
+    python -m src.cli chat --provider ollama --session chats/demo.jsonl --prompt "Hi, I'm Bob."
+    python -m src.cli chat --provider ollama --session chats/demo.jsonl --prompt "What's my name?"
+
     # M2: structured output and/or tool calling during chat
     python -m src.cli chat --provider groq --prompt "Summarize this release" \
         --schema examples/structured/release_notes_schema.json
@@ -34,6 +39,7 @@ from typing import List, Optional
 from .core.errors import FormatError, GatewayError, to_gateway_error
 from .core.logger import log_request
 from .core.orchestrator import DEFAULT_MAX_TOOL_ITERATIONS, run_turn
+from .core.session import load_session_messages, save_session_messages
 from .core.telemetry import Timer
 from .providers.base import BaseProvider, ChatMessage
 from .providers.groq_provider import GroqProvider
@@ -101,6 +107,16 @@ def _add_chat_arguments(parser: argparse.ArgumentParser) -> None:
         dest="max_retries",
         help="Retries on unparsable/invalid final answer before giving up (only relevant with --schema).",
     )
+    parser.add_argument(
+        "--session",
+        default=None,
+        dest="session_path",
+        help=(
+            "JSONL session file enabling multi-turn chat: prior history is loaded from it "
+            "(when it exists) and the completed turn is appended to it, so consecutive "
+            "calls sharing a --session continue the same conversation."
+        ),
+    )
 
 
 def _add_structured_arguments(parser: argparse.ArgumentParser) -> None:
@@ -165,19 +181,20 @@ def build_messages(system: Optional[str], prompt: str, schema: Optional[dict] = 
     return messages
 
 
-def _run_sync(provider: BaseProvider, messages: List[ChatMessage], args: argparse.Namespace) -> int:
+def _run_sync(provider: BaseProvider, messages: List[ChatMessage], args: argparse.Namespace) -> tuple[str, int]:
     response = provider.chat(messages, temperature=args.temperature, max_tokens=args.max_tokens)
     print(response.text)
-    return response.tokens_out
+    return response.text, response.tokens_out
 
 
-def _run_stream(provider: BaseProvider, messages: List[ChatMessage], args: argparse.Namespace) -> int:
+def _run_stream(provider: BaseProvider, messages: List[ChatMessage], args: argparse.Namespace) -> tuple[str, int]:
     chunks: List[str] = []
     for chunk in provider.chat_stream(messages, temperature=args.temperature, max_tokens=args.max_tokens):
         print(chunk, end="", flush=True)
         chunks.append(chunk)
     print()  # trailing newline once the stream ends
-    return count_tokens("".join(chunks))
+    text = "".join(chunks)
+    return text, count_tokens(text)
 
 
 def _read_text_file(path: str) -> str:
@@ -218,7 +235,26 @@ def _main_chat(args: argparse.Namespace) -> int:
         schema = load_and_validate_schema(args.schema_path) if args.schema_path else None
         registered_tools = get_tools(_split_tool_names(args.tools)) if args.tools else None
 
-        messages = build_messages(args.system, args.prompt, schema=schema)
+        # Multi-turn support: --session loads prior history (if the file
+        # exists) and the completed turn's transcript is appended to it after
+        # a successful run. The file only ever grows — a failed turn leaves
+        # it valid, so retrying the same command resumes cleanly.
+        prior_messages = load_session_messages(args.session_path) if args.session_path else None
+
+        # On a continuation turn the loaded history already carries the
+        # system/schema-instruction messages from the turn that created the
+        # session, so neither --system nor --schema is injected twice.
+        messages = (prior_messages or []) + build_messages(
+            None if prior_messages is not None else args.system,
+            args.prompt,
+            schema=schema if prior_messages is None else None,
+        )
+        if prior_messages and args.system:
+            print(
+                "Note: --system is ignored when continuing an existing session; "
+                "the session's saved system message takes precedence.",
+                file=sys.stderr,
+            )
         tokens_in = count_message_tokens([m.to_dict() for m in messages])
 
         provider = build_provider(args.provider, args.model)
@@ -244,12 +280,22 @@ def _main_chat(args: argparse.Namespace) -> int:
             tokens_out = result.tokens_out
             tool_call_count = result.tool_call_count
             tool_iterations = result.tool_iterations
+            transcript = result.messages
             if schema is not None:
                 print(json.dumps(result.data, indent=2, ensure_ascii=False))
             else:
                 print(result.text)
         else:
-            tokens_out = _run_stream(provider, messages, args) if args.stream else _run_sync(provider, messages, args)
+            reply, tokens_out = (
+                _run_stream(provider, messages, args) if args.stream else _run_sync(provider, messages, args)
+            )
+            transcript = messages + [ChatMessage(role="assistant", content=reply or None)]
+
+        if args.session_path:
+            try:
+                save_session_messages(args.session_path, transcript)
+            except Exception as exc:  # the answer already succeeded — losing the session write must not fail the command
+                print(f"Warning: could not update session file {args.session_path}: {exc}", file=sys.stderr)
     except GatewayError as exc:
         timer.stop()
         _log_and_report(exc, args, tokens_in, timer.elapsed_ms)

@@ -4,5 +4,14 @@ __pycache__/
 logs/*.jsonl
 .pytest_cache/
 *.egg-info/
+result.json
+examples/
 AUDIT.md
+
+.venv/
+
+# Session files created by `chat --session` (private conversation data)
+chats/
+
+# Local Freebuff client state
 .freebuff/

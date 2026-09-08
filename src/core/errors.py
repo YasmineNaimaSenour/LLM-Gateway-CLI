@@ -81,6 +81,22 @@ class ToolLoopError(FormatError):
     bounds tool-call round-trips — different loops, different knobs."""
 
 
+# ---------------------------------------------------------------------------
+# Session-persistence errors (src/core/session.py).
+#
+# FormatError, like SchemaError above: a corrupt user-supplied session file
+# is "the request's input was malformed", and this keeps it in the existing
+# five-category log taxonomy rather than inventing a sixth bucket.
+# Defined here (not in session.py) so errors.py stays the single, complete
+# taxonomy — every GatewayError subclass is findable in this one file.
+# ---------------------------------------------------------------------------
+
+
+class SessionError(FormatError):
+    """A session file exists but can't be used (no parseable session
+    records in it)."""
+
+
 class ModelError(GatewayError):
     error_type = ErrorType.MODEL_ERROR
 

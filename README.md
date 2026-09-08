@@ -166,6 +166,9 @@ still works for backward compatibility, but `chat` is the explicit form.
 python -m src.cli chat --provider ollama --prompt "Explain TCP handshakes"
 ```
 
+See [Multi-turn chat (sessions)](#multi-turn-chat-sessions) for continuing a
+conversation across CLI invocations with `--session`.
+
 #### Streaming
 
 ```bash
@@ -173,6 +176,32 @@ python -m src.cli chat --provider groq --model openai/gpt-oss-20b \
     --system "You are terse." --prompt "Explain TCP handshakes" \
     --temperature 0.2 --max-tokens 200 --stream
 ```
+
+### Multi-turn chat (sessions)
+
+`chat` is stateless by default: one prompt in, one response out. Add
+`--session <file>` to make consecutive CLI calls continue one conversation:
+
+```bash
+python -m src.cli chat --provider ollama --session chats/demo.jsonl --prompt "Hi, I'm Bob."
+python -m src.cli chat --provider ollama --session chats/demo.jsonl --prompt "What's my name?"
+```
+
+The session file is append-only JSONL — one line per `ChatMessage`, exactly
+the transcript the orchestrator returns for a turn — so it is inspectable
+with `cat`/`jq` and crash-safe (a process dying mid-write loses at most the
+torn trailing line, which is skipped on load). Everything is persisted at
+full fidelity: system messages, assistant tool calls, and tool results, so
+a tool-calling conversation resumes with its complete context.
+
+Notes:
+
+* A failed turn is never persisted — the file only grows on success, so
+  retrying the same command resumes cleanly.
+* On a continuation turn `--system` and `--schema` are not re-injected
+  (the session already carries the system/schema-instruction messages from
+  the turn that created it); passing them again just prints a note on
+  stderr and is otherwise ignored.
 
 ### Structured output during chat
 
@@ -326,6 +355,10 @@ by exception type for callers that care.
 * Runs a tool-calling loop (`chat --tools`): offers tools to the model,
   executes whichever ones it calls via an in-repo registry
   (`src/tools/`), and feeds results back until it gets a final answer
+* Supports multi-turn chat (`chat --session <file>`): prior history is
+  loaded from and the completed turn is appended to an append-only JSONL
+  session file (`src/core/session.py`), so consecutive CLI calls continue
+  one conversation — including tool-calling sessions
 * Uses native provider capabilities where available (Ollama's
   schema-constrained `format` decoding, Groq's `json_object` mode) as a
   reliability optimization — gateway-side validation still always runs,
@@ -345,6 +378,7 @@ src/
 ├── core/
 │   ├── types.py          # provider-agnostic ToolSpec / ToolCall / ToolResult
 │   ├── orchestrator.py    # run_turn(): the tool-call loop + schema coercion, shared by chat & structured
+│   ├── session.py         # --session persistence: append-only JSONL conversation transcripts
 │   ├── errors.py          # five-category error taxonomy
 │   ├── logger.py          # JSONL request logging
 │   └── telemetry.py       # request timing
