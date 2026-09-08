@@ -5,4 +5,4 @@ logs/*.jsonl
 .pytest_cache/
 *.egg-info/
 AUDIT.md
-.freebuff
+.freebuff/
