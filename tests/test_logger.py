@@ -40,3 +40,34 @@ def test_log_request_appends(tmp_path):
         )
     lines = log_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 3
+
+
+def test_log_request_error_subtype_defaults_to_none_and_round_trips(tmp_path):
+    log_path = tmp_path / "requests.jsonl"
+
+    log_request(
+        provider="ollama",
+        latency_ms=1.0,
+        tokens_in=1,
+        tokens_out=1,
+        temperature=0.0,
+        status="success",
+        error_type=None,
+        log_path=log_path,
+    )
+    log_request(
+        provider="ollama",
+        latency_ms=1.0,
+        tokens_in=1,
+        tokens_out=1,
+        temperature=0.0,
+        status="error",
+        error_type="format",
+        error_subtype="ToolLoopError",
+        log_path=log_path,
+    )
+
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    success, failure = (json.loads(line) for line in lines)
+    assert success["error_subtype"] is None
+    assert failure["error_subtype"] == "ToolLoopError"

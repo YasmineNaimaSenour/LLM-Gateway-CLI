@@ -5,10 +5,6 @@ the log file, matching the schema required by the project spec:
 
     timestamp, provider, latency_ms, tokens_in, tokens_out,
     temperature, status, error_type, tool_calls, tool_iterations
-
-`tool_calls` / `tool_iterations` are additive (M2): total tool invocations
-and tool-loop round-trips for the request, or None when tool calling
-wasn't involved at all.
 """
 
 from __future__ import annotations
@@ -31,6 +27,7 @@ def log_request(
     temperature: float,
     status: str,
     error_type: Optional[str] = None,
+    error_subtype: Optional[str] = None,
     tool_calls: Optional[int] = None,
     tool_iterations: Optional[int] = None,
     log_path: Path = DEFAULT_LOG_PATH,
@@ -39,6 +36,8 @@ def log_request(
 
     `status` must be "success" or "error". `error_type` should be one of
     the ErrorType values (see core.errors) when status == "error", else None.
+    `error_subtype` should be the concrete exception class name when status
+    == "error" (GatewayError subclasses know who they are), else None.
     """
 
     record = {
@@ -50,6 +49,7 @@ def log_request(
         "temperature": temperature,
         "status": status,
         "error_type": error_type,
+        "error_subtype": error_subtype,
         "tool_calls": tool_calls,
         "tool_iterations": tool_iterations,
     }

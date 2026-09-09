@@ -227,10 +227,11 @@ def _log_and_report(exc: GatewayError, args: argparse.Namespace, tokens_in: int,
         temperature=args.temperature,
         status="error",
         error_type=exc.error_type.value,
+        error_subtype=type(exc).__name__,
     )
-    # error_type keeps the 5-category log taxonomy; the class name gives the
-    # sharper distinction (e.g. SchemaError vs UnsupportedSchemaError vs
-    # ExtractionError vs ToolLoopError) without changing what gets logged.
+    # error_type keeps the 5-category log taxonomy; error_subtype records the
+    # concrete class name (e.g. SchemaError vs ToolLoopError vs ExtractionError)
+    # so the JSONL log itself can distinguish same-category failure modes.
     print(f"[{exc.error_type.value}:{type(exc).__name__}] {exc}", file=sys.stderr)
 
 

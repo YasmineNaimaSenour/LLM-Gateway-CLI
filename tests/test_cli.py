@@ -194,6 +194,30 @@ def test_cli_chat_unknown_tool_reports_error_without_calling_provider(mock_log_r
 
 @patch("src.cli.log_request")
 @patch("src.cli.build_provider")
+def test_cli_tool_loop_error_logs_its_own_error_subtype(mock_build_provider, mock_log_request):
+    # A tool loop is FORMAT_ERROR in the 5-category taxonomy, but the log must
+    # still distinguish it from a malformed schema/payload — via error_subtype.
+    mock_provider = mock_build_provider.return_value
+    mock_provider.name = "ollama"
+    tool_call = ToolCall(id="1", name="calculator", arguments={"a": 40, "b": 2, "operation": "add"})
+    mock_provider.chat.side_effect = [
+        ChatResponse(text="", tokens_out=5, tool_calls=[tool_call]),
+        ChatResponse(text="", tokens_out=5, tool_calls=[tool_call]),
+        ChatResponse(text="", tokens_out=5, tool_calls=[tool_call]),
+    ]
+
+    exit_code = main(
+        ["chat", "--provider", "ollama", "--prompt", "loop forever", "--tools", "calculator", "--max-tool-iterations", "2"]
+    )
+
+    assert exit_code == 1
+    assert mock_log_request.call_args.kwargs["status"] == "error"
+    assert mock_log_request.call_args.kwargs["error_type"] == "format"
+    assert mock_log_request.call_args.kwargs["error_subtype"] == "ToolLoopError"
+
+
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
 def test_cli_structured_gives_up_after_max_retries_and_reports_error(
     mock_build_provider, mock_log_request, tmp_path
 ):
@@ -221,3 +245,4 @@ def test_cli_structured_gives_up_after_max_retries_and_reports_error(
     assert exit_code == 1
     assert mock_provider.chat.call_count == 2  # 1 initial + 1 retry
     assert mock_log_request.call_args.kwargs["status"] == "error"
+    assert mock_log_request.call_args.kwargs["error_subtype"] == "ExtractionError"

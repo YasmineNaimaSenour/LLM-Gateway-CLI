@@ -316,7 +316,7 @@ specification:
 | `properties`, `required`                                 | Yes |
 | `additionalProperties` (boolean only)                    | Yes |
 | `enum` (on any type)                                      | Yes |
-| `description`                                             | Yes |
+| `description` (must be a string, validated at every level)  | Yes |
 | Nullable types via `"type": [<type>, "null"]`             | Yes |
 | String: `minLength`, `maxLength`, `pattern`               | Yes |
 | Number/integer: `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` | Yes |

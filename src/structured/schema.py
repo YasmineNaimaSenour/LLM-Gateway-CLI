@@ -95,6 +95,7 @@ def check_supported_subset(schema: Any, *, path: str = "$") -> None:
         raise UnsupportedSchemaError(f"{path}: boolean JSON Schemas (`true`/`false`) are not supported.")
 
     _reject_unsupported_keywords(schema, path)
+    _check_description(schema, path)
     _check_enum(schema, path)
 
     schema_type, nullable = _resolve_type(schema, path)
@@ -144,6 +145,24 @@ def _reject_unsupported_keywords(schema: Dict[str, Any], path: str) -> None:
     if present:
         raise UnsupportedSchemaError(
             f"{path}: uses keyword(s) {present} which are outside the supported JSON Schema subset."
+        )
+
+
+def _check_description(schema: Dict[str, Any], path: str) -> None:
+    """`description`, when present, must be a string — at every schema level.
+
+    Notes on why this lives in the subset checker and not just meta-validation:
+    the JSON Schema 2020-12 meta-schema does reject a non-string
+    `description`, so `load_and_validate_schema()` would catch it anyway —
+    but as a SchemaError with a cryptic metaschema message, and only when the
+    caller goes through the full pipeline. check_supported_subset() is a
+    public entry point (tests and callers invoke it directly), and this module
+    is the single source of truth for what the supported subset accepts, so
+    the check belongs here with a clear UnsupportedSchemaError message.
+    """
+    if "description" in schema and not isinstance(schema["description"], str):
+        raise UnsupportedSchemaError(
+            f"{path}: 'description' must be a string, got {type(schema['description']).__name__}."
         )
 
 

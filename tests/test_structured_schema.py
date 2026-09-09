@@ -116,6 +116,62 @@ def test_empty_enum_is_unsupported():
         check_supported_subset(schema)
 
 
+# -- description must be a string at every level (audit #6) ----------------
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        # root level
+        {"type": "object", "description": 123, "properties": {"a": {"type": "string"}}},
+        # property level (scalars pass through to the model builder, so this
+        # is the level where a bad description would break Pydantic)
+        {"type": "object", "properties": {"a": {"type": "string", "description": ["not a string"]}}},
+        # nested object property
+        {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string", "description": {"nested": "object"}}},
+                }
+            },
+        },
+        # array items level
+        {"type": "object", "properties": {"a": {"type": "array", "items": {"type": "string", "description": 3.5}}}},
+        # a bare enum with no declared type still gets checked
+        {"type": "object", "properties": {"a": {"enum": [1, 2], "description": False}}},
+    ],
+)
+def test_non_string_description_at_any_level_is_unsupported(schema):
+    with pytest.raises(UnsupportedSchemaError, match="'description' must be a string"):
+        check_supported_subset(schema)
+
+
+def test_string_descriptions_at_every_level_pass():
+    schema = {
+        "type": "object",
+        "description": "root",
+        "properties": {
+            "a": {"type": "array", "description": "property", "items": {"type": "string", "description": "item"}}
+        },
+    }
+    check_supported_subset(schema)  # should not raise
+
+
+def test_non_string_description_is_caught_by_both_layers():
+    # Layering note: through load_and_validate_schema() the jsonschema
+    # meta-schema rejects a non-string `description` first (as SchemaError,
+    # with a cryptic metaschema message). The subset-level check exists for
+    # direct callers of check_supported_subset() — also a public entry
+    # point — and raises UnsupportedSchemaError with a clearer message.
+    schema = {"type": "object", "description": 123, "properties": {"a": {"type": "string"}}}
+    with pytest.raises(SchemaError):
+        validate_json_schema_document(schema)
+    with pytest.raises(UnsupportedSchemaError, match="'description' must be a string"):
+        check_supported_subset(schema)
+
+
 # -- the happy path: full supported subset --------------------------------
 
 
