@@ -5,7 +5,6 @@ logs/*.jsonl
 .pytest_cache/
 *.egg-info/
 result.json
-examples/
 AUDIT.md
 
 .venv/

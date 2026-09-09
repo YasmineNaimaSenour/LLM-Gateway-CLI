@@ -193,3 +193,81 @@ def test_run_turn_combines_tools_and_schema_without_a_redundant_final_call():
     # coerce_to_schema (no wasted extra call since it already validated)
     assert provider.chat.call_count == 2
     assert result.tokens_out == 11
+
+
+# -- tool-loop progress events (audit #15) ----------------------------------
+
+
+def test_run_turn_emits_progress_events_during_the_tool_loop():
+    call = ToolCall(id="1", name="calculator", arguments={"a": 1, "b": 2, "operation": "add"})
+    provider = _provider(
+        ChatResponse(text="", tokens_out=5, tool_calls=[call]),
+        ChatResponse(text="The result is 3.", tokens_out=4, tool_calls=[]),
+    )
+    executor = ToolExecutor(get_tools(["calculator"]))
+    events = []
+
+    result = run_turn(
+        provider,
+        _messages(),
+        tools=[get_tools(["calculator"])[0].spec],
+        tool_executor=executor,
+        on_tool_loop_event=lambda event, detail: events.append((event, detail)),
+    )
+
+    assert result.text == "The result is 3."
+    # The final tool-free round-trip also runs through the loop (the existing
+    # no-redundant-final-call behavior), so it announces "thinking" before the
+    # loop reports "done".
+    assert events == [
+        ("thinking", "1"),  # provider round-trip starting
+        ("tool", "calculator"),  # tool call being executed
+        ("thinking", "2"),  # the answer-producing round-trip
+        ("done", None),  # loop finished with an answer
+    ]
+
+
+def test_run_turn_emits_no_events_without_a_tool_loop():
+    # The callback is part of the tool-loop contract; plain chat and
+    # schema-only turns have no loop to observe.
+    events = []
+    provider = _provider(ChatResponse(text="hello back", tokens_out=5))
+    run_turn(provider, _messages(), on_tool_loop_event=lambda e, d: events.append((e, d)))
+    assert events == []
+
+    events.clear()
+    provider = _provider(
+        ChatResponse(text="not json at all", tokens_out=3),
+        ChatResponse(text='{"name": "Bob", "age": 30}', tokens_out=6),
+    )
+    run_turn(provider, _messages(), response_schema=SCHEMA, on_tool_loop_event=lambda e, d: events.append((e, d)))
+    assert events == []
+
+
+def test_run_turn_tool_loop_events_fire_per_round_and_per_tool():
+    # Two rounds, two different tools: each provider round-trip emits exactly
+    # one "thinking" event, each executed tool exactly one "tool" event.
+    call_a = ToolCall(id="1", name="calculator", arguments={"a": 1, "b": 2, "operation": "add"})
+    call_time = ToolCall(id="2", name="current_time", arguments={})
+    provider = _provider(
+        ChatResponse(text="", tokens_out=5, tool_calls=[call_a, call_time]),
+        ChatResponse(text="All done.", tokens_out=4, tool_calls=[]),
+    )
+    executor = ToolExecutor(get_tools(["calculator", "current_time"]))
+    events = []
+
+    run_turn(
+        provider,
+        _messages(),
+        tools=[t.spec for t in get_tools(["calculator", "current_time"])],
+        tool_executor=executor,
+        on_tool_loop_event=lambda event, detail: events.append((event, detail)),
+    )
+
+    assert events == [
+        ("thinking", "1"),
+        ("tool", "calculator"),
+        ("tool", "current_time"),
+        ("thinking", "2"),
+        ("done", None),
+    ]

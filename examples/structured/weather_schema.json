@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "description": "Normalized weather report from free-form prose. Demonstrates nullable types, enums, nested objects, and number constraints.",
+  "properties": {
+    "location": {
+      "type": "object",
+      "properties": {
+        "city": { "type": "string" },
+        "country": { "type": "string" }
+      },
+      "required": ["city"]
+    },
+    "temperature_c": {
+      "type": "number",
+      "description": "Air temperature in whole degrees Celsius.",
+      "minimum": -90,
+      "maximum": 60
+    },
+    "condition": {
+      "type": "string",
+      "enum": ["clear", "partly cloudy", "overcast", "rain", "snow", "storm"]
+    },
+    "visibility_km": { "type": ["number", "null"], "description": "Reported visibility, or null when not mentioned." },
+    "advisories": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["location", "temperature_c", "condition"]
+}

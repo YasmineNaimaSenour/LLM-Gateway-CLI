@@ -47,7 +47,7 @@ from .providers.registry import get_provider as _registry_get_provider
 from .structured.extractor import extract as run_extraction
 from .structured.extractor import schema_instruction_message
 from .structured.schema import load_and_validate_schema
-from .token_utils import count_message_tokens, count_tokens
+from .token_utils import count_message_tokens, count_method, count_tokens
 from .tools.executor import ToolExecutor
 from .tools.registry import get_tools
 
@@ -286,6 +286,25 @@ def _main_chat(args: argparse.Namespace) -> int:
                     "showing the full response once it's ready.",
                     file=sys.stderr,
                 )
+            # Tool-bearing turns never stream (see providers/base.py), but they
+            # can be slow — the model thinks, calls tools, thinks again. Rather
+            # than silence (audit #15's complaint), report loop progress on
+            # stderr: each provider round-trip and each tool execution. Only
+            # --tools creates the loop, so the observer is only wired then; the
+            # schema-only path has a single provider call to wait on.
+            on_tool_loop_event = (
+                (lambda event, detail: print(
+                    {
+                        "thinking": f"… thinking (round {detail})",
+                        "tool": f"… calling tool: {detail}",
+                        "done": "… writing answer",
+                    }[event],
+                    file=sys.stderr,
+                    flush=True,
+                ))
+                if registered_tools
+                else None
+            )
             result = run_turn(
                 provider,
                 messages,
@@ -296,6 +315,7 @@ def _main_chat(args: argparse.Namespace) -> int:
                 max_retries=args.max_retries,
                 temperature=args.temperature,
                 max_tokens=args.max_tokens,
+                on_tool_loop_event=on_tool_loop_event,
             )
             tokens_out = result.tokens_out
             provider_tokens_in = result.tokens_in  # provider-billed prompt count (audit #11), if reported
@@ -333,6 +353,11 @@ def _main_chat(args: argparse.Namespace) -> int:
     # especially for non-OpenAI tokenizers. The client-side pre-count stays
     # as the fallback (and remains the pre-request context-window signal).
     logged_tokens_in = provider_tokens_in if provider_tokens_in is not None else tokens_in
+    # token_count_method (audit #13) records HOW tokens_in was counted so log
+    # analysis can tell precise provider-billed counts (None here — the count
+    # came from the provider, not from this client) from tiktoken vs. the
+    # heuristic fallback.
+    token_count_method = None if provider_tokens_in is not None else count_method()
     log_request(
         provider=args.provider,
         latency_ms=timer.elapsed_ms,
@@ -341,6 +366,7 @@ def _main_chat(args: argparse.Namespace) -> int:
         temperature=args.temperature,
         status="success",
         error_type=None,
+        token_count_method=token_count_method,
         tool_calls=tool_call_count,
         tool_iterations=tool_iterations,
     )
@@ -387,6 +413,11 @@ def _main_structured(args: argparse.Namespace) -> int:
     # Same audit-#11 preference as chat: provider-billed prompt tokens when
     # reported, client-side pre-count otherwise.
     logged_tokens_in = provider_tokens_in if provider_tokens_in is not None else tokens_in
+    # token_count_method (audit #13) records HOW tokens_in was counted so log
+    # analysis can tell precise provider-billed counts (None here — the count
+    # came from the provider, not from this client) from tiktoken vs. the
+    # heuristic fallback.
+    token_count_method = None if provider_tokens_in is not None else count_method()
     log_request(
         provider=args.provider,
         latency_ms=timer.elapsed_ms,
@@ -395,6 +426,7 @@ def _main_structured(args: argparse.Namespace) -> int:
         temperature=args.temperature,
         status="success",
         error_type=None,
+        token_count_method=token_count_method,
     )
     return 0
 

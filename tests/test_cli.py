@@ -110,6 +110,39 @@ def test_cli_falls_back_to_client_side_tokens_in_when_provider_reports_none(
     assert isinstance(logged, int) and logged > 0  # the pre-count, not None
 
 
+# -- how the logged tokens_in was counted (audit #13) -----------------------
+
+
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
+def test_cli_logs_client_side_token_count_method_when_provider_reports_none(
+    mock_build_provider, mock_log_request
+):
+    mock_provider = mock_build_provider.return_value
+    mock_provider.chat.return_value = ChatResponse(text="hello back", tokens_out=5, tokens_in=None)
+
+    exit_code = main(["chat", "--provider", "ollama", "--prompt", "hi"])
+
+    assert exit_code == 0
+    method = mock_log_request.call_args.kwargs["token_count_method"]
+    assert method in ("tiktoken", "heuristic")  # whichever counter is active
+
+
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
+def test_cli_omits_token_count_method_for_provider_billed_tokens(
+    mock_build_provider, mock_log_request
+):
+    mock_provider = mock_build_provider.return_value
+    mock_provider.chat.return_value = ChatResponse(text="hello back", tokens_out=5, tokens_in=33)
+
+    exit_code = main(["chat", "--provider", "ollama", "--prompt", "hi"])
+
+    assert exit_code == 0
+    assert mock_log_request.call_args.kwargs["token_count_method"] is None
+    assert mock_log_request.call_args.kwargs["tokens_in"] == 33
+
+
 # -- structured subcommand -------------------------------------------------
 
 
@@ -242,6 +275,32 @@ def test_cli_chat_with_tools_executes_calculator_and_returns_final_answer(mock_b
     assert capsys.readouterr().out.strip() == "It's 42."
     assert mock_log_request.call_args.kwargs["tool_calls"] == 1
     assert mock_log_request.call_args.kwargs["tool_iterations"] == 1
+
+
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
+def test_cli_chat_with_tools_shows_loop_progress_on_stderr(
+    mock_build_provider, mock_log_request, capsys
+):
+    # audit #15: tool-bearing turns can't stream, but the user shouldn't stare
+    # at silence either — each provider round-trip and tool execution is
+    # announced on stderr while stdout stays reserved for the final answer.
+    mock_provider = mock_build_provider.return_value
+    mock_provider.name = "ollama"
+    tool_call = ToolCall(id="1", name="calculator", arguments={"a": 40, "b": 2, "operation": "add"})
+    mock_provider.chat.side_effect = [
+        ChatResponse(text="", tokens_out=5, tool_calls=[tool_call]),
+        ChatResponse(text="It's 42.", tokens_out=4, tool_calls=[]),
+    ]
+
+    exit_code = main(["chat", "--provider", "ollama", "--prompt", "what is 40+2?", "--tools", "calculator"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "It's 42."  # answer alone on stdout
+    assert "thinking (round 1)" in captured.err
+    assert "calling tool: calculator" in captured.err
+    assert "writing answer" in captured.err
 
 
 @patch("src.cli.log_request")

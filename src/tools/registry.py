@@ -26,8 +26,7 @@ from pydantic import BaseModel, Field
 
 from ..core.errors import FormatError
 from ..core.types import ToolSpec
-from ..structured.model_builder import build_model
-from ..structured.schema import check_supported_subset
+from ..structured import build_model, check_supported_subset  # declared package API (audit #20)
 
 ParametersSpec = Union[Dict[str, Any], Type[BaseModel]]
 

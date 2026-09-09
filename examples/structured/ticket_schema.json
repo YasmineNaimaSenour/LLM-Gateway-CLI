@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "description": "Structured support-ticket triage record extracted from a raw complaint.",
+  "properties": {
+    "ticket_id": { "type": "string", "pattern": "^TICKET-[0-9]{4,6}$" },
+    "severity": {
+      "type": "string",
+      "description": "Triage bucket for the routing queue.",
+      "enum": ["low", "medium", "high", "critical"]
+    },
+    "product_area": { "type": "string", "enum": ["billing", "shipping", "account", "other"] },
+    "customer": {
+      "type": "object",
+      "description": "Who is affected, as identified in the message.",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" }
+      },
+      "required": ["email"]
+    },
+    "orders": {
+      "type": "array",
+      "description": "Every order number referenced in the message, if any.",
+      "items": { "type": "string" }
+    },
+    "refund_requested": {
+      "type": ["string", "null"],
+      "description": "Refund amount as written in the message (e.g. \"49.90 EUR\"), or null when no refund is requested.",
+      "pattern": "^[0-9]+(\\.[0-9]{1,2})? [A-Z]{3}$"
+    },
+    "churn_risk": { "type": "boolean" }
+  },
+  "required": ["ticket_id", "severity", "product_area", "customer"]
+}

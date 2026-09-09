@@ -6,10 +6,17 @@ generation, tool calling, and eventually evaluation of LLM workloads.
 
 ## Setup
 
-Install the Python dependencies:
+Install the Python dependencies (runtime only — see the note below for
+development work):
 
 ```bash
 pip install -r requirements.txt
+```
+
+For development (adds the test suite's dependencies):
+
+```bash
+pip install -r requirements-dev.txt
 ```
 
 Create the environment file:
@@ -264,7 +271,7 @@ input text + JSON Schema → validate schema → convert schema to a Pydantic mo
 ```bash
 python -m src.cli structured \
     --provider ollama \
-    --input examples/structured/sample_input.txt \
+    --input examples/structured/person_input.txt \
     --schema examples/structured/person_schema.json
 ```
 
@@ -300,10 +307,21 @@ Save the result to a file:
 ```bash
 python -m src.cli structured \
     --provider groq --model openai/gpt-oss-20b \
-    --input examples/structured/sample_input.txt \
+    --input examples/structured/person_input.txt \
     --schema examples/structured/person_schema.json \
     --output result.json --max-retries 3
 ```
+
+More ready-to-run example pairs live in `examples/structured/`, each
+demonstrating different parts of the supported subset (every schema is
+guarded by tests, so they can't rot):
+
+| Example                        | Demonstrates                                              |
+|--------------------------------|-----------------------------------------------------------|
+| `person_schema.json`           | nested objects, arrays, nullable fields                   |
+| `release_notes_schema.json`    | nested objects, arrays of objects, string enums, patterns |
+| `ticket_schema.json`           | enums, nullable strings with patterns, booleans           |
+| `weather_schema.json`          | nullable numbers, enums, nested location                  |
 
 #### Supported JSON Schema subset
 
@@ -391,7 +409,9 @@ works, with `--model` defaulting to `my-model-7b` when not given.
   so behavior stays identical across providers
 * Counts input tokens before every request (via `tiktoken`, falling back to a heuristic);
   when a provider reports its own billed `prompt_tokens` in the response, that
-  count is preferred in the log instead
+  count is preferred in the log instead, and the record states how a client-side
+  count was produced (`token_count_method: "tiktoken" | "heuristic"`, null when
+  the count came from the provider)
 * Measures request latency
 * Retries transient provider failures (connection blips, HTTP 500/502/503/504)
   with exponential backoff and a stderr notice per retry
@@ -424,7 +444,8 @@ src/
 ├── token_utils.py     # pre-request token counting
 └── cli.py             # entry point / argument parsing + I/O only (chat + structured subcommands)
 examples/
-└── structured/        # sample schema + input text used in the docs above
+└── structured/        # four schema + input example pairs (person, release notes,
+                        # support ticket, weather) covering the supported subset
 experiments/           # sampling variance, context behavior, and failure-case logs
 tests/                 # pytest suite (providers mocked, no network required)
 ```

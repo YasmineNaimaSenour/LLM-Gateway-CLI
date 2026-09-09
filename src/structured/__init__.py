@@ -13,7 +13,23 @@ Pydantic is an implementation detail of this package only: nothing outside
 plain dicts and the shared `GatewayError` hierarchy from `src.core.errors`.
 """
 
-from .extractor import ExtractionResult, extract
-from .schema import load_and_validate_schema
+from .extractor import (
+    DEFAULT_MAX_RETRIES,
+    ExtractionResult,
+    coerce_to_schema,
+    extract,
+    schema_instruction_message,
+)
+from .model_builder import build_model
+from .schema import check_supported_subset, load_and_validate_schema
 
-__all__ = ["ExtractionResult", "extract", "load_and_validate_schema"]
+__all__ = [
+    "DEFAULT_MAX_RETRIES",
+    "ExtractionResult",
+    "build_model",
+    "check_supported_subset",
+    "coerce_to_schema",
+    "extract",
+    "load_and_validate_schema",
+    "schema_instruction_message",
+]

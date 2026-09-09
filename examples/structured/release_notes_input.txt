@@ -1,0 +1,19 @@
+Announcing Loom 2.4.0 "Copperfield"
+
+Loom 2.4.0 is our biggest quality release this year. It ships a rewritten
+sync engine that cuts initial synchronization time by more than half,
+restores offline editing on iOS, and removes the long-deprecated v1 API in
+favor of the v2 endpoints we introduced last spring.
+
+Full changelog:
+
+- Rewrote the sync engine; initial sync is now 2-3x faster (added)
+  - with thanks to @mira and @jtomas
+- Offline editing on iOS works again after the 2.2 regression (fixed) by @priya
+- The v1 REST API has been removed; migrate to v2 before December (removed) by @dvo
+- Session tokens now rotate every 12 hours (security) by @samk
+- Export dialogs remember the last-used format (changed) by @priya
+
+Known issues: on Windows, the tray icon occasionally disappears until the
+app is restarted. Large workspaces (50k+ documents) may see slow search
+indexing for the first hour after upgrade.

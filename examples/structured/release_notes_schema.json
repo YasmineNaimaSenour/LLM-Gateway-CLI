@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "description": "Structured summary of a software release: identification, one-paragraph summary, grouped changes, and known issues.",
+  "properties": {
+    "release": {
+      "type": "object",
+      "description": "Basic release identification.",
+      "properties": {
+        "version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "codename": { "type": "string" }
+      },
+      "required": ["version"]
+    },
+    "summary": {
+      "type": "string",
+      "description": "One-paragraph human summary of the release.",
+      "minLength": 10,
+      "maxLength": 300
+    },
+    "changes": {
+      "type": "array",
+      "description": "Every user-visible change in this release.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "category": { "type": "string", "enum": ["added", "changed", "fixed", "removed", "security"] },
+          "authors": { "type": "array", "description": "Handles of the people responsible.", "items": { "type": "string" }, "minItems": 1 }
+        },
+        "required": ["title", "category"]
+      },
+      "minItems": 1
+    },
+    "known_issues": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["release", "summary", "changes"]
+}

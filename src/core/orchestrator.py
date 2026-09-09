@@ -8,12 +8,19 @@ Tool-bearing turns are always non-streaming (see providers/base.py's
 applies only to the final, tool-free turn — the tool loop and the schema
 coercion are different control-flow shapes (a bounded loop vs. a bounded
 retry) that compose here rather than sharing one abstraction.
+
+While the loop runs, `on_tool_loop_event` delivers a structured
+`ToolLoopEvent` at each meaningful point (a provider round-trip starting,
+a tool call being executed, the loop finishing). This keeps tool-bearing
+turns observable for interfaces — the CLI prints progress to stderr —
+without the provider-side complexity of streaming tool-call payloads
+(audit #15).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from .errors import ToolLoopError
 from .types import ToolSpec
@@ -42,6 +49,30 @@ class OrchestrationResult:
     tokens_in: Optional[int] = None
 
 
+# Deliberately minimal: what matters for progress UIs is WHERE the turn is
+# (waiting on the model / running a tool / producing the answer) and WHICH
+# tool, not a full dump of the conversation — callers can read the final
+# transcript from OrchestrationResult.messages when the turn completes.
+ToolLoopEvent = Tuple[str, Optional[str]]
+
+
+@dataclass
+class ToolLoopObserver:
+    """Callback protocol for observing a tool loop while it runs (audit #15).
+
+    Receives `(event, detail)` pairs:
+
+      ("thinking", iteration number as str)  — provider call starting
+      ("tool",     tool name)                — a tool call is being executed
+      ("done",     None)                     — loop finished with an answer
+
+    Deliberately minimal: what matters for a progress UI is WHERE the turn
+    is (waiting on the model / running a tool / producing the answer) and
+    WHICH tool — not a dump of the conversation. The full transcript is
+    available from OrchestrationResult.messages once the turn completes.
+    """
+
+
 def run_turn(
     provider: BaseProvider,
     messages: List[ChatMessage],
@@ -53,6 +84,7 @@ def run_turn(
     max_retries: int = DEFAULT_MAX_RETRIES,
     temperature: float = 0.7,
     max_tokens: int = 512,
+    on_tool_loop_event: Optional[ToolLoopObserver] = None,
 ) -> OrchestrationResult:
     """Run one full turn: an optional tool-calling loop, then an optional
     schema-coercion step on the final, tool-free answer.
@@ -62,6 +94,11 @@ def run_turn(
     message appended during the turn, including the final answer) is
     returned as `OrchestrationResult.messages`. Reuse that list — not the
     one you passed in — to continue the conversation in a follow-up turn.
+
+    `on_tool_loop_event` (see `ToolLoopObserver`), when given, is called at
+    each step of the tool loop so interactive callers can show progress
+    while a tool-bearing turn (which never streams) is in flight. Callback
+    failures are treated as observer bugs: they abort the turn.
     """
     if tools and tool_executor is None:
         raise ValueError("tool_executor is required when tools are provided")
@@ -78,9 +115,11 @@ def run_turn(
     response = None
 
     if tools:
-        for _ in range(max_tool_iterations):
+        for iteration in range(max_tool_iterations):
             # Snapshot per call: the provider sees the conversation exactly as
             # it was at call time, even though `messages` keeps growing after.
+            if on_tool_loop_event is not None:
+                on_tool_loop_event("thinking", str(iteration + 1))
             response = provider.chat(list(messages), temperature=temperature, max_tokens=max_tokens, tools=tools)
             if not response.tool_calls:
                 break  # tool-free final turn — fall through to schema handling below
@@ -93,6 +132,8 @@ def run_turn(
             )
             for call in response.tool_calls:
                 tool_call_count += 1
+                if on_tool_loop_event is not None:
+                    on_tool_loop_event("tool", call.name)
                 result = tool_executor.execute(call)
                 messages.append(
                     ChatMessage(role="tool", content=result.content, tool_call_id=result.tool_call_id, name=call.name)
@@ -103,6 +144,8 @@ def run_turn(
                 "without producing a final answer.",
                 provider=provider.name,
             )
+        if on_tool_loop_event is not None:
+            on_tool_loop_event("done", None)
 
     if response_schema is not None:
         extraction = coerce_to_schema(

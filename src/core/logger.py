@@ -4,7 +4,9 @@ Each call to log_request() appends exactly one JSON object (one line) to
 the log file, matching the schema required by the project spec:
 
     timestamp, provider, latency_ms, tokens_in, tokens_out,
-    temperature, status, error_type, tool_calls, tool_iterations
+    temperature, status, error_type, tool_calls, tool_iterations,
+    plus additive fields added since the project spec (documented inline
+    below): error_subtype and token_count_method (audit #3 / #13).
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ def log_request(
     status: str,
     error_type: Optional[str] = None,
     error_subtype: Optional[str] = None,
+    token_count_method: Optional[str] = None,
     tool_calls: Optional[int] = None,
     tool_iterations: Optional[int] = None,
     log_path: Path = DEFAULT_LOG_PATH,
@@ -38,6 +41,10 @@ def log_request(
     the ErrorType values (see core.errors) when status == "error", else None.
     `error_subtype` should be the concrete exception class name when status
     == "error" (GatewayError subclasses know who they are), else None.
+    `token_count_method` should be "tiktoken" or "heuristic" — how `tokens_in`
+    was counted when client-side (provider-billed counts make it None), so
+    cost/context analysis can tell precise counts from approximations (audit
+    #13). Optional for backward compatibility with existing callers/tests.
     """
 
     record = {
@@ -50,6 +57,7 @@ def log_request(
         "status": status,
         "error_type": error_type,
         "error_subtype": error_subtype,
+        "token_count_method": token_count_method,
         "tool_calls": tool_calls,
         "tool_iterations": tool_iterations,
     }

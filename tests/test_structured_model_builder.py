@@ -152,3 +152,42 @@ def test_property_names_needing_sanitization_round_trip_via_alias():
     instance = Model.model_validate({"zip-code": "12345", "class": "A"})
     dumped = instance.model_dump(by_alias=True)
     assert dumped == {"zip-code": "12345", "class": "A"}
+
+
+def test_sanitized_field_names_use_pythonic_names_internally_and_aliases_on_the_wire():
+    # audit #16, part 1: the alias mechanism has TWO sides, and the original
+    # test only checked one. Internally the field is the sanitized Python
+    # name (model_dump without by_alias); on the wire it's the original
+    # schema property name (by_alias=True) so output JSON matches the schema.
+    schema = {
+        "type": "object",
+        "properties": {"zip-code": {"type": "string"}, "class": {"type": "string"}, "2fa": {"type": "boolean"}},
+        "required": ["zip-code", "class", "2fa"],
+    }
+    Model = build_model(schema)
+    instance = Model.model_validate({"zip-code": "12345", "class": "A", "2fa": True})
+
+    # sanitized names: hyphens -> underscores, keywords get a suffix,
+    # leading digits get an f_ prefix
+    assert instance.model_dump() == {"zip_code": "12345", "class_": "A", "f_2fa": True}
+    # original names restored:
+    assert instance.model_dump(by_alias=True) == {"zip-code": "12345", "class": "A", "2fa": True}
+
+
+def test_model_validate_accepts_both_original_and_sanitized_keys():
+    # audit #16, part 2: populate_by_name=True means callers may feed the
+    # model EITHER the schema's property names (the wire path — what the
+    # extractor does) or the sanitized Python field names. Both must work,
+    # and must produce the same instance.
+    schema = {
+        "type": "object",
+        "properties": {"zip-code": {"type": "string"}, "class": {"type": "string"}},
+        "required": ["zip-code", "class"],
+    }
+    Model = build_model(schema)
+
+    by_original = Model.model_validate({"zip-code": "12345", "class": "A"})
+    by_sanitized = Model.model_validate({"zip_code": "12345", "class_": "A"})
+
+    assert by_original == by_sanitized
+    assert by_original.model_dump(by_alias=True) == {"zip-code": "12345", "class": "A"}
