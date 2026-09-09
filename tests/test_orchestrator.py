@@ -132,6 +132,45 @@ def test_run_turn_schema_only_delegates_to_coerce_to_schema():
     assert provider.chat.call_count == 2
 
 
+# -- provider-reported prompt tokens (audit #11) ----------------------------
+
+
+def test_run_turn_passes_provider_reported_tokens_in_through():
+    provider = _provider(ChatResponse(text="hello back", tokens_out=5, tokens_in=37))
+    result = run_turn(provider, _messages())
+    assert result.tokens_in == 37
+
+
+def test_run_turn_tokens_in_is_none_when_provider_does_not_report():
+    provider = _provider(ChatResponse(text="hello back", tokens_out=5))
+    result = run_turn(provider, _messages())
+    assert result.tokens_in is None  # callers keep their client-side fallback
+
+
+def test_run_turn_tool_loop_tokens_in_reflects_the_final_conversation_call():
+    call = ToolCall(id="1", name="calculator", arguments={"a": 1, "b": 2, "operation": "add"})
+    provider = _provider(
+        ChatResponse(text="", tokens_out=5, tool_calls=[call], tokens_in=20),
+        ChatResponse(text="The result is 3.", tokens_out=4, tokens_in=48),
+    )
+    executor = ToolExecutor(get_tools(["calculator"]))
+
+    result = run_turn(provider, _messages(), tools=[get_tools(["calculator"])[0].spec], tool_executor=executor)
+
+    # each successive call is billed on the full conversation so far, so the
+    # provider's count from the LAST call is the accurate prompt total
+    assert result.tokens_in == 48
+
+
+def test_run_turn_schema_path_tokens_in_come_from_the_accepted_attempt():
+    provider = _provider(
+        ChatResponse(text="not json at all", tokens_out=3, tokens_in=15),
+        ChatResponse(text='{"name": "Bob", "age": 30}', tokens_out=6, tokens_in=52),
+    )
+    result = run_turn(provider, _messages(), response_schema=SCHEMA, max_retries=1)
+    assert result.tokens_in == 52  # the call that produced the accepted answer
+
+
 def test_run_turn_combines_tools_and_schema_without_a_redundant_final_call():
     call = ToolCall(id="1", name="calculator", arguments={"a": 1, "b": 2, "operation": "add"})
     provider = _provider(

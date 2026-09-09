@@ -158,7 +158,9 @@ export GROQ_API_KEY="your_api_key_here"
 ### Chat
 
 The `chat` subcommand can be omitted — `python -m src.cli --provider ... --prompt ...`
-still works for backward compatibility, but `chat` is the explicit form.
+still works for backward compatibility, but `chat` is the explicit form. The
+implicit form is **deprecated**: each use prints a stderr warning, and it will
+be removed in a future release. Update scripts to say `chat` explicitly.
 
 #### Non-streaming
 
@@ -387,7 +389,9 @@ works, with `--model` defaulting to `my-model-7b` when not given.
   schema-constrained `format` decoding, Groq's `json_object` mode) as a
   reliability optimization — gateway-side validation still always runs,
   so behavior stays identical across providers
-* Counts input tokens before every request (via `tiktoken`, falling back to a heuristic)
+* Counts input tokens before every request (via `tiktoken`, falling back to a heuristic);
+  when a provider reports its own billed `prompt_tokens` in the response, that
+  count is preferred in the log instead
 * Measures request latency
 * Retries transient provider failures (connection blips, HTTP 500/502/503/504)
   with exponential backoff and a stderr notice per retry

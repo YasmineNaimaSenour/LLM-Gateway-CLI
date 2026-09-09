@@ -148,7 +148,17 @@ class OllamaProvider(BaseProvider):
             raise FormatError(f"Unexpected Ollama response shape: {exc}", provider=self.name, cause=exc)
 
         tool_calls = self._parse_tool_calls(message)
-        return ChatResponse(text=text, tokens_out=count_tokens(text), tool_calls=tool_calls, raw=data)
+        # Ollama reports prompt usage on the final non-streaming chunk;
+        # surface tokens_in when present (audit #11), else None so callers
+        # fall back to client-side counting.
+        prompt_eval_count = data.get("prompt_eval_count")
+        return ChatResponse(
+            text=text,
+            tokens_out=count_tokens(text),
+            tool_calls=tool_calls,
+            raw=data,
+            tokens_in=prompt_eval_count if isinstance(prompt_eval_count, int) else None,
+        )
 
     def chat_stream(self, messages, *, temperature: float = 0.7, max_tokens: int = 512) -> Iterator[str]:
         resp = self._post(self._payload(messages, temperature, max_tokens, stream=True), stream=True)

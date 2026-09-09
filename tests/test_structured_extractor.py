@@ -4,7 +4,12 @@ import pytest
 
 from src.core.errors import ExtractionError
 from src.providers.base import ChatMessage, ChatResponse
-from src.structured.extractor import coerce_to_schema, extract, schema_instruction_message
+from src.structured.extractor import (
+    _json_object_summary,
+    coerce_to_schema,
+    extract,
+    schema_instruction_message,
+)
 
 SCHEMA = {
     "type": "object",
@@ -129,3 +134,99 @@ def test_schema_instruction_message_is_a_system_message_mentioning_the_schema():
     message = schema_instruction_message(SCHEMA)
     assert message.role == "system"
     assert '"age"' in message.content
+
+
+# -- balanced-brace JSON extraction (audit #9) -----------------------------
+
+
+def test_extract_json_picks_the_first_object_not_first_brace_to_last_brace():
+    # The audit's exact failure mode: the old text.find("{")/text.rfind("}")
+    # slice would have produced `{...} and also {...}` — invalid JSON — and
+    # the extraction would have failed despite a perfectly good first object.
+    provider = _mock_provider('The data is {"name": "Bob", "age": 30} and also {"note": "ignore me"}')
+    result = extract(provider, "text", SCHEMA, max_retries=0)
+    assert result.data == {"name": "Bob", "age": 30}
+
+
+def test_extract_json_handles_nested_objects():
+    provider = _mock_provider('prefix {"outer": {"inner": {"deep": 1}}} suffix')
+    schema = {
+        "type": "object",
+        "properties": {"outer": {"type": "object", "properties": {"inner": {"type": "object", "properties": {"deep": {"type": "integer"}}}}}},
+        "required": ["outer"],
+    }
+    result = extract(provider, "text", schema, max_retries=0)
+    assert result.data == {"outer": {"inner": {"deep": 1}}}
+
+
+def test_extract_json_ignores_braces_inside_string_values():
+    provider = _mock_provider('{"name": "} we{rd{o}", "age": 5}')
+    result = extract(provider, "text", SCHEMA, max_retries=0)
+    assert result.data == {"name": "} we{rd{o}", "age": 5}
+
+
+def test_extract_json_survives_braces_in_surrounding_prose():
+    provider = _mock_provider('Use {curly} braces {a lot}. Answer: {"name": "Bob", "age": 30}')
+    result = extract(provider, "text", SCHEMA, max_retries=0)
+    assert result.data == {"name": "Bob", "age": 30}
+
+
+def test_extract_json_returns_none_for_unclosed_object():
+    from src.structured.extractor import _extract_json_value
+
+    assert _extract_json_value('{"name": {"inner": 1}') is None  # depth never returns to 0
+    assert _extract_json_value('{broken') is None
+    assert _extract_json_value('no braces at all') is None
+
+
+# -- corrective retry messages restate the schema requirements (audit #10) --
+
+
+def test_retry_message_carries_a_concise_schema_summary():
+    provider = _mock_provider('{"name": "Bob"}', '{"name": "Bob", "age": 30}')
+    extract(provider, "Bob is 30.", SCHEMA, max_retries=1)
+
+    retry_message = provider.chat.call_args_list[1][0][0][-1]
+    assert retry_message.role == "user"
+    assert "required): string" in retry_message.content  # per-field types...
+    assert "required): integer" in retry_message.content
+    assert '"name"' not in retry_message.content.split("Validation error")[1]  # ...and the raw schema blob is not repeated
+
+
+def test_retry_message_summarizes_enums_and_nested_structures():
+    schema = {
+        "type": "object",
+        "properties": {
+            "role": {"type": "string", "enum": ["admin", "user"]},
+            "address": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+            "tags": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["role"],
+    }
+    summary = _json_object_summary(schema)
+    assert '- $.role (required): one of "admin", "user"' in summary
+    assert '- $.address.city (required): string' in summary
+    assert '$.tags items: string' in summary
+
+
+# -- provider-reported prompt tokens (audit #11) ----------------------------
+
+
+def test_extract_carries_provider_reported_tokens_in():
+    provider = MagicMock()
+    provider.name = "fake"
+    provider.chat.return_value = ChatResponse(text='{"name": "Bob", "age": 30}', tokens_out=6, tokens_in=42)
+
+    result = extract(provider, "Bob is 30.", SCHEMA)
+
+    assert result.tokens_in == 42
+
+
+def test_extract_tokens_in_is_none_when_provider_does_not_report():
+    provider = MagicMock()
+    provider.name = "fake"
+    provider.chat.return_value = ChatResponse(text='{"name": "Bob", "age": 30}', tokens_out=6)
+
+    result = extract(provider, "Bob is 30.", SCHEMA)
+
+    assert result.tokens_in is None  # callers keep their client-side fallback

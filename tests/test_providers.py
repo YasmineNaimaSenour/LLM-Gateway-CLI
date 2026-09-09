@@ -24,13 +24,25 @@ _TOOL = ToolSpec(name="calculator", description="add numbers", parameters={"type
 @patch("src.providers.ollama_provider.requests.post")
 def test_ollama_chat_success(mock_post):
     mock_resp = MagicMock(status_code=200)
-    mock_resp.json.return_value = {"message": {"content": "hi there"}}
+    mock_resp.json.return_value = {"message": {"content": "hi there"}, "prompt_eval_count": 12}
     mock_post.return_value = mock_resp
 
     provider = OllamaProvider(model="llama3.2")
     response = provider.chat(_msg())
     assert response.text == "hi there"
     assert response.tokens_out > 0
+    assert response.tokens_in == 12  # provider-billed prompt count (audit #11)
+
+
+@patch("src.providers.ollama_provider.requests.post")
+def test_ollama_tokens_in_is_none_when_usage_not_reported(mock_post):
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"message": {"content": "hi there"}}
+    mock_post.return_value = mock_resp
+
+    provider = OllamaProvider(model="llama3.2")
+    response = provider.chat(_msg())
+    assert response.tokens_in is None  # callers fall back to client-side counting
 
 
 @patch("src.providers.http_utils.time.sleep")
@@ -121,7 +133,7 @@ def test_groq_chat_success(mock_post, monkeypatch):
     mock_resp = MagicMock(status_code=200)
     mock_resp.json.return_value = {
         "choices": [{"message": {"content": "hi"}}],
-        "usage": {"completion_tokens": 3},
+        "usage": {"completion_tokens": 3, "prompt_tokens": 11},
     }
     mock_post.return_value = mock_resp
 
@@ -129,6 +141,19 @@ def test_groq_chat_success(mock_post, monkeypatch):
     response = provider.chat(_msg())
     assert response.text == "hi"
     assert response.tokens_out == 3
+    assert response.tokens_in == 11  # provider-billed prompt count (audit #11)
+
+
+@patch("src.providers.groq_provider.requests.post")
+def test_groq_tokens_in_is_none_when_usage_missing(mock_post, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "hi"}}]}
+    mock_post.return_value = mock_resp
+
+    provider = GroqProvider(model="llama-3.1-8b-instant")
+    response = provider.chat(_msg())
+    assert response.tokens_in is None  # callers fall back to client-side counting
 
 
 @patch("src.providers.groq_provider.requests.post")

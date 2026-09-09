@@ -165,11 +165,12 @@ class GroqProvider(BaseProvider):
             text = message.get("content") or ""
             usage = data.get("usage", {})
             tokens_out = usage.get("completion_tokens") or count_tokens(text)
+            tokens_in = usage.get("prompt_tokens")  # provider-billed count (audit #11); None if unreported
         except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
             raise FormatError(f"Unexpected Groq response shape: {exc}", provider=self.name, cause=exc)
 
         tool_calls = self._parse_tool_calls(message)
-        return ChatResponse(text=text, tokens_out=tokens_out, tool_calls=tool_calls, raw=data)
+        return ChatResponse(text=text, tokens_out=tokens_out, tool_calls=tool_calls, raw=data, tokens_in=tokens_in)
 
     def chat_stream(self, messages, *, temperature: float = 0.7, max_tokens: int = 512) -> Iterator[str]:
         resp = self._post(self._payload(messages, temperature, max_tokens, stream=True), stream=True)

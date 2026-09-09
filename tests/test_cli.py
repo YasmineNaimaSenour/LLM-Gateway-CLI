@@ -48,6 +48,68 @@ def test_cli_explicit_chat_subcommand_matches_backward_compatible_flat_form(
     assert mock_log_request.call_args.kwargs["status"] == "success"
 
 
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
+def test_cli_flat_form_still_works_but_prints_a_deprecation_warning(
+    mock_build_provider, mock_log_request, capsys
+):
+    # audit #7: the implicit 'chat' form still functions, but every use
+    # prints a stderr warning so scripts get a visible migration signal.
+    mock_provider = mock_build_provider.return_value
+    mock_provider.chat.return_value = ChatResponse(text="hello back", tokens_out=5)
+
+    exit_code = main(["--provider", "ollama", "--prompt", "hi"])
+
+    assert exit_code == 0
+    stderr = capsys.readouterr().err
+    assert "implicit 'chat' subcommand is deprecated" in stderr
+    assert mock_log_request.call_args.kwargs["status"] == "success"
+
+
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
+def test_cli_explicit_chat_form_prints_no_deprecation_warning(
+    mock_build_provider, mock_log_request, capsys
+):
+    mock_provider = mock_build_provider.return_value
+    mock_provider.chat.return_value = ChatResponse(text="hello back", tokens_out=5)
+
+    exit_code = main(["chat", "--provider", "ollama", "--prompt", "hi"])
+
+    assert exit_code == 0
+    assert "deprecated" not in capsys.readouterr().err
+
+
+# -- provider-reported prompt tokens in the log (audit #11) -----------------
+
+
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
+def test_cli_logs_provider_reported_tokens_in_when_available(mock_build_provider, mock_log_request):
+    mock_provider = mock_build_provider.return_value
+    mock_provider.chat.return_value = ChatResponse(text="hello back", tokens_out=5, tokens_in=33)
+
+    exit_code = main(["chat", "--provider", "ollama", "--prompt", "hi"])
+
+    assert exit_code == 0
+    assert mock_log_request.call_args.kwargs["tokens_in"] == 33  # provider-billed, not tiktoken's guess
+
+
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
+def test_cli_falls_back_to_client_side_tokens_in_when_provider_reports_none(
+    mock_build_provider, mock_log_request
+):
+    mock_provider = mock_build_provider.return_value
+    mock_provider.chat.return_value = ChatResponse(text="hello back", tokens_out=5, tokens_in=None)
+
+    exit_code = main(["chat", "--provider", "ollama", "--prompt", "hi"])
+
+    assert exit_code == 0
+    logged = mock_log_request.call_args.kwargs["tokens_in"]
+    assert isinstance(logged, int) and logged > 0  # the pre-count, not None
+
+
 # -- structured subcommand -------------------------------------------------
 
 

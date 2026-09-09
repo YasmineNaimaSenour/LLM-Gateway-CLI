@@ -154,12 +154,19 @@ def _normalize_argv(argv: List[str]) -> List[str]:
     """Backward compatibility: allow omitting the 'chat' subcommand entirely.
 
     `--provider ollama --prompt hi` (the pre-subcommand CLI shape) is treated
-    as `chat --provider ollama --prompt hi`.
+    as `chat --provider ollama --prompt hi`. The implicit form is deprecated
+    (audit #7): it still works, but each use prints a one-line stderr warning
+    so scripts have a visible signal to migrate before it is removed.
     """
     if not argv:
         return ["chat"]
     if argv[0] in _COMMANDS or argv[0] in ("-h", "--help"):
         return argv
+    print(
+        "Warning: the implicit 'chat' subcommand is deprecated and will be removed "
+        "in a future release. Use: chat --provider ... --prompt ...",
+        file=sys.stderr,
+    )
     return ["chat", *argv]
 
 
@@ -189,20 +196,23 @@ def build_messages(system: Optional[str], prompt: str, schema: Optional[dict] = 
     return messages
 
 
-def _run_sync(provider: BaseProvider, messages: List[ChatMessage], args: argparse.Namespace) -> tuple[str, int]:
+def _run_sync(provider: BaseProvider, messages: List[ChatMessage], args: argparse.Namespace) -> tuple[str, int, Optional[int]]:
     response = provider.chat(messages, temperature=args.temperature, max_tokens=args.max_tokens)
     print(response.text)
-    return response.text, response.tokens_out
+    return response.text, response.tokens_out, response.tokens_in
 
 
-def _run_stream(provider: BaseProvider, messages: List[ChatMessage], args: argparse.Namespace) -> tuple[str, int]:
+def _run_stream(provider: BaseProvider, messages: List[ChatMessage], args: argparse.Namespace) -> tuple[str, int, Optional[int]]:
     chunks: List[str] = []
     for chunk in provider.chat_stream(messages, temperature=args.temperature, max_tokens=args.max_tokens):
         print(chunk, end="", flush=True)
         chunks.append(chunk)
     print()  # trailing newline once the stream ends
     text = "".join(chunks)
-    return text, count_tokens(text)
+    # Streaming chunks carry no usage report in the current provider
+    # contract, so there is no provider-billed tokens_in here — callers
+    # fall back to the client-side pre-count.
+    return text, count_tokens(text), None
 
 
 def _read_text_file(path: str) -> str:
@@ -238,6 +248,7 @@ def _log_and_report(exc: GatewayError, args: argparse.Namespace, tokens_in: int,
 def _main_chat(args: argparse.Namespace) -> int:
     timer = Timer().start()
     tokens_in = 0
+    provider_tokens_in: Optional[int] = None
     tool_call_count: Optional[int] = None
     tool_iterations: Optional[int] = None
     try:
@@ -287,6 +298,7 @@ def _main_chat(args: argparse.Namespace) -> int:
                 max_tokens=args.max_tokens,
             )
             tokens_out = result.tokens_out
+            provider_tokens_in = result.tokens_in  # provider-billed prompt count (audit #11), if reported
             tool_call_count = result.tool_call_count
             tool_iterations = result.tool_iterations
             transcript = result.messages
@@ -295,7 +307,7 @@ def _main_chat(args: argparse.Namespace) -> int:
             else:
                 print(result.text)
         else:
-            reply, tokens_out = (
+            reply, tokens_out, provider_tokens_in = (
                 _run_stream(provider, messages, args) if args.stream else _run_sync(provider, messages, args)
             )
             transcript = messages + [ChatMessage(role="assistant", content=reply or None)]
@@ -316,10 +328,15 @@ def _main_chat(args: argparse.Namespace) -> int:
         return 1
 
     timer.stop()
+    # Prefer the provider's own billed prompt-token count when it reports one
+    # (audit #11) — more accurate than the tiktoken/heuristic pre-count,
+    # especially for non-OpenAI tokenizers. The client-side pre-count stays
+    # as the fallback (and remains the pre-request context-window signal).
+    logged_tokens_in = provider_tokens_in if provider_tokens_in is not None else tokens_in
     log_request(
         provider=args.provider,
         latency_ms=timer.elapsed_ms,
-        tokens_in=tokens_in,
+        tokens_in=logged_tokens_in,
         tokens_out=tokens_out,
         temperature=args.temperature,
         status="success",
@@ -333,6 +350,7 @@ def _main_chat(args: argparse.Namespace) -> int:
 def _main_structured(args: argparse.Namespace) -> int:
     timer = Timer().start()
     tokens_in = 0
+    provider_tokens_in: Optional[int] = None
     try:
         input_text = _read_text_file(args.input_path)
         schema = load_and_validate_schema(args.schema_path)
@@ -347,6 +365,7 @@ def _main_structured(args: argparse.Namespace) -> int:
             max_tokens=args.max_tokens,
             max_retries=args.max_retries,
         )
+        provider_tokens_in = result.tokens_in
     except GatewayError as exc:
         timer.stop()
         _log_and_report(exc, args, tokens_in, timer.elapsed_ms)
@@ -365,10 +384,13 @@ def _main_structured(args: argparse.Namespace) -> int:
     else:
         print(output_json)
 
+    # Same audit-#11 preference as chat: provider-billed prompt tokens when
+    # reported, client-side pre-count otherwise.
+    logged_tokens_in = provider_tokens_in if provider_tokens_in is not None else tokens_in
     log_request(
         provider=args.provider,
         latency_ms=timer.elapsed_ms,
-        tokens_in=tokens_in,
+        tokens_in=logged_tokens_in,
         tokens_out=result.tokens_out,
         temperature=args.temperature,
         status="success",

@@ -36,18 +36,13 @@ class _DummyProvider(BaseProvider):
 @pytest.fixture
 def clean_registry():
     """Snapshot the registry around each test so dummy registrations and
-    unregistrations never leak into other tests."""
-    registry = _registry_contents()
-    snapshot = dict(registry)
-    yield
-    registry.clear()
-    registry.update(snapshot)
-
-
-def _registry_contents():
+    unregistrations never leak into other tests (uses the registry's own
+    snapshot/restore helpers rather than its private state)."""
     from src.providers import registry
 
-    return registry._REGISTRY
+    snapshot = registry.DEFAULT_REGISTRY.snapshot()
+    yield
+    registry.DEFAULT_REGISTRY.restore(snapshot)
 
 
 # ---------------------------------------------------------------------------

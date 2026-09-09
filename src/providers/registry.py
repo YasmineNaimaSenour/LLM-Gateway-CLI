@@ -5,11 +5,15 @@ Once the defining module is imported, the provider is first-class: the CLI's
 `--provider` choices, `--model` defaulting, and instantiation all flow from
 this registry, and the CLI needs zero edits.
 
-The registry holds `ProviderSpec` records, not instances: instantiation is
-deferred to `get_provider()` so that constructors stay cheap and errorful
-side effects (e.g. GroqProvider raising ModelError when GROQ_API_KEY is
-missing) happen at call time, where the CLI's error handling lives — not at
-import time of an unrelated module.
+Like the tool registry (audit #8), registry mechanics live in a class whose
+state is instance-level; a single module-level `DEFAULT_REGISTRY` instance
+preserves the import-time registration flow, and the module-level function
+aliases keep every existing call site unchanged. The registry holds
+`ProviderSpec` records, not instances: instantiation is deferred to
+`get_provider()` so that constructors stay cheap and errorful side effects
+(e.g. GroqProvider raising ModelError when GROQ_API_KEY is missing) happen
+at call time, where the CLI's error handling lives — not at import time of
+an unrelated module.
 """
 
 from __future__ import annotations
@@ -31,55 +35,79 @@ class ProviderSpec:
     default_model: Optional[str] = None
 
 
-_REGISTRY: Dict[str, ProviderSpec] = {}
+class ProviderRegistry:
+    """An instance-isolated set of registered providers.
 
-
-def register_provider(
-    name: str, *, default_model: Optional[str] = None
-) -> Callable[[Type[BaseProvider]], Type[BaseProvider]]:
-    """Class decorator: make a BaseProvider subclass available to the CLI."""
-
-    def decorator(cls: Type[BaseProvider]) -> Type[BaseProvider]:
-        if name in _REGISTRY:
-            raise FormatError(f"Provider {name!r} is already registered.")
-        _REGISTRY[name] = ProviderSpec(name=name, cls=cls, default_model=default_model)
-        return cls
-
-    return decorator
-
-
-def get_provider_spec(name: str) -> ProviderSpec:
-    """Look up a provider by name. Raises FormatError for unknown names.
-
-    The CLI validates `--provider` before ever touching a network — this is
-    a caller/config check, distinct from a provider failing at call time
-    (rate limit, timeout, ...), which the error taxonomy handles instead.
+    One instance per runtime (the CLI uses `DEFAULT_REGISTRY`); tests can
+    create private instances for isolation, and a future server mode can
+    pass instances around explicitly instead of sharing process globals.
     """
-    spec = _REGISTRY.get(name)
-    if spec is None:
-        available = ", ".join(sorted(_REGISTRY)) or "(none registered)"
-        raise FormatError(f"Unknown provider: {name!r}. Available providers: {available}.")
-    return spec
+
+    def __init__(self) -> None:
+        self._providers: Dict[str, ProviderSpec] = {}
+
+    def register_provider(
+        self, name: str, *, default_model: Optional[str] = None
+    ) -> Callable[[Type[BaseProvider]], Type[BaseProvider]]:
+        """Class decorator: make a BaseProvider subclass available to the CLI."""
+
+        def decorator(cls: Type[BaseProvider]) -> Type[BaseProvider]:
+            if name in self._providers:
+                raise FormatError(f"Provider {name!r} is already registered.")
+            self._providers[name] = ProviderSpec(name=name, cls=cls, default_model=default_model)
+            return cls
+
+        return decorator
+
+    def get_provider_spec(self, name: str) -> ProviderSpec:
+        """Look up a provider by name. Raises FormatError for unknown names.
+
+        The CLI validates `--provider` before ever touching a network — this
+        is a caller/config check, distinct from a provider failing at call
+        time (rate limit, timeout, ...), which the error taxonomy handles
+        instead.
+        """
+        spec = self._providers.get(name)
+        if spec is None:
+            available = ", ".join(sorted(self._providers)) or "(none registered)"
+            raise FormatError(f"Unknown provider: {name!r}. Available providers: {available}.")
+        return spec
+
+    def get_provider(self, name: str, model: Optional[str] = None) -> BaseProvider:
+        """Instantiate a provider, falling back to its registered default model.
+
+        Raises FormatError for an unregistered name. Construction errors
+        (missing API keys, etc.) propagate from the provider's own __init__
+        and are the provider's business, not the registry's.
+        """
+        spec = self.get_provider_spec(name)
+        return spec.cls(model=model or spec.default_model)
+
+    def provider_names(self) -> List[str]:
+        """All registered provider names (sorted)."""
+        return sorted(self._providers)
+
+    def unregister_provider(self, name: str) -> None:
+        """Remove a provider registration. Exists for test isolation."""
+        self._providers.pop(name, None)
+
+    def snapshot(self) -> Dict[str, ProviderSpec]:
+        """A copy of the registration table — for test isolation helpers."""
+        return dict(self._providers)
+
+    def restore(self, snapshot: Dict[str, ProviderSpec]) -> None:
+        """Replace the registration table with a previous snapshot."""
+        self._providers = dict(snapshot)
 
 
-def get_provider(name: str, model: Optional[str] = None) -> BaseProvider:
-    """Instantiate a provider, falling back to its registered default model.
+# The module-level default instance preserves the existing import-time
+# registration flow; the bound-function aliases below keep every existing
+# call site (`@register_provider`, `get_provider(...)`, `provider_names()`)
+# working unchanged.
+DEFAULT_REGISTRY = ProviderRegistry()
 
-    Raises FormatError for an unregistered name. Construction errors (missing
-    API keys, etc.) propagate from the provider's own __init__ and are the
-    provider's business, not the registry's.
-    """
-    spec = get_provider_spec(name)
-    return spec.cls(model=model or spec.default_model)
-
-
-def provider_names() -> List[str]:
-    """All registered provider names (sorted)."""
-    return sorted(_REGISTRY)
-
-
-def unregister_provider(name: str) -> None:
-    """Remove a provider registration. Exists for test isolation — the
-    registry, like the tool registry, is intentionally module-level global
-    state (audit #8 covers making that instance-based before server mode)."""
-    _REGISTRY.pop(name, None)
+register_provider = DEFAULT_REGISTRY.register_provider
+get_provider = DEFAULT_REGISTRY.get_provider
+get_provider_spec = DEFAULT_REGISTRY.get_provider_spec
+provider_names = DEFAULT_REGISTRY.provider_names
+unregister_provider = DEFAULT_REGISTRY.unregister_provider

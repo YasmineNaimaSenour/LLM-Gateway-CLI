@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Iterator, List, Optional
 
 from pydantic import ValidationError
 
@@ -44,6 +44,9 @@ JSON Schema:
 
 _RETRY_TEMPLATE = """Your previous response was not valid for the schema.
 
+What you must produce (reminder):
+{schema_summary}
+
 Your previous response:
 {previous}
 
@@ -55,6 +58,40 @@ Reply again with ONLY a corrected JSON object matching the schema. No prose, no 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE) 
 
 
+def _json_object_summary(schema: dict, path: str = "$") -> str:
+    """A compact, model-readable one-line-per-field summary of an object schema.
+
+    Used in corrective retry messages (audit #10): by the time a retry
+    happens, the full schema from the original system prompt may have
+    scrolled out of the model's effective attention window, so each retry
+    re-states just what the final object must contain — required fields,
+    types, enum values — instead of relying on "your last answer was wrong"
+    alone.
+    """
+    lines: List[str] = []
+
+    def _describe(sub: dict) -> str:
+        if "enum" in sub:
+            return "one of " + ", ".join(json.dumps(v) for v in sub["enum"])
+        t = sub.get("type")
+        if isinstance(t, list):
+            return " or ".join(t)
+        return t or "any"
+
+    properties: dict = schema.get("properties", {})
+    required = set(schema.get("required", []))
+    for name, sub in properties.items():
+        if not isinstance(sub, dict):
+            continue
+        marker = "required" if name in required else "optional"
+        lines.append(f"- {path}.{name} ({marker}): {_describe(sub)}")
+        if sub.get("type") == "object" and isinstance(sub.get("properties"), dict):
+            lines.append(_json_object_summary(sub, path=f"{path}.{name}"))
+        if sub.get("type") == "array" and isinstance(sub.get("items"), dict):
+            lines.append(f"  ({path}.{name} items: {_describe(sub['items'])})")
+    return "\n".join(lines)
+
+
 @dataclass
 class ExtractionResult:
     """Everything the CLI (or another caller) needs from a successful extraction."""
@@ -63,6 +100,10 @@ class ExtractionResult:
     tokens_out: int
     attempts: int
     raw_text: str
+    # Provider-reported prompt tokens for the call that produced the accepted
+    # answer (audit #11); None when the provider doesn't report usage, in
+    # which case callers fall back to client-side counting.
+    tokens_in: Optional[int] = None
 
 
 def schema_instruction_message(schema: dict) -> ChatMessage:
@@ -109,9 +150,15 @@ def coerce_to_schema(
     original classification).
     """
     model = build_model(schema, model_name=model_name)
+    # Built once: every corrective retry message carries a concise reminder
+    # of WHAT to produce (required fields, types, enum values), so the retry
+    # prompt stands on its own even when early context (audit #10) has
+    # pushed the full schema out of the model's effective attention window.
+    schema_summary = _json_object_summary(schema)
 
     last_error: Optional[str] = None
     last_raw = ""
+    last_tokens_in: Optional[int] = None
     total_attempts = max_retries + 1
     response = initial_response
 
@@ -124,6 +171,7 @@ def coerce_to_schema(
                 list(messages), temperature=temperature, max_tokens=max_tokens, response_schema=schema
             )
         last_raw = response.text
+        last_tokens_in = response.tokens_in  # provider-billed prompt count (audit #11), if reported
 
         parsed = _extract_json_value(response.text)
         if parsed is None:
@@ -141,12 +189,18 @@ def coerce_to_schema(
                     tokens_out=response.tokens_out,
                     attempts=attempt,
                     raw_text=response.text,
+                    tokens_in=last_tokens_in,
                 )
 
         if attempt < total_attempts:
             messages.append(ChatMessage(role="assistant", content=response.text))
             messages.append(
-                ChatMessage(role="user", content=_RETRY_TEMPLATE.format(previous=response.text, error=last_error))
+                ChatMessage(
+                    role="user",
+                    content=_RETRY_TEMPLATE.format(
+                        schema_summary=schema_summary, previous=response.text, error=last_error
+                    ),
+                )
             )
             response = None  # force a fresh call on the next attempt
 
@@ -168,7 +222,10 @@ def extract(
 ) -> ExtractionResult:
     """Extract structured data from a fixed block of text (the `structured`
     CLI command). Thin wrapper: builds the extraction-specific system/user
-    messages and delegates to `coerce_to_schema()`."""
+    messages and delegates to `coerce_to_schema()`. The provider-billed
+    `tokens_in` (audit #11) rides on the returned ExtractionResult — the
+    provider's count already covers the messages built here.
+    """
     schema_json = json.dumps(schema, indent=2)
     messages: List[ChatMessage] = [
         ChatMessage(role="system", content=_SYSTEM_PROMPT_TEMPLATE.format(schema_json=schema_json)),
@@ -183,8 +240,11 @@ def _extract_json_value(text: str) -> Any:
     """Best-effort extraction of a JSON value from a raw model response.
 
     Tries, in order: the whole response as-is, a ```json ... ``` fenced
-    block, then the largest {...} span in the text. Returns None if nothing
-    parses.
+    block, then the first balanced {...} span found by brace-depth counting
+    (audit #9). The depth counter handles nested objects correctly and is
+    immune to braces inside string literals or prose sitting between two
+    separate JSON objects — failure modes of the old first-{-to-last-}
+    slice. Returns None if nothing parses.
     """
     text = text.strip()
     if not text:
@@ -202,11 +262,49 @@ def _extract_json_value(text: str) -> Any:
         except json.JSONDecodeError:
             pass
 
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
+    for candidate in _find_balanced_json_objects(text):
         try:
-            return json.loads(text[start : end + 1])
+            return json.loads(candidate)
         except json.JSONDecodeError:
-            pass
+            continue  # a balanced but non-JSON span (e.g. prose braces) — try the next
 
     return None
+
+
+def _find_balanced_json_objects(text: str) -> Iterator[str]:
+    """Yield each balanced `{...}` span in `text`, in order.
+
+    Walks the text counting brace depth (audit #9): a span is yielded where
+    the depth first returns to 0, then scanning continues after it — so a
+    non-JSON balanced span in prose (e.g. `{curly}`) is skipped rather than
+    aborting the search, and prose braces between two JSON objects cannot
+    glue them into one invalid span. String literals are honored — braces
+    inside `"..."` never affect the count, so `"a": "}"` cannot end a span
+    early. A balanced-but-non-JSON span simply fails `json.loads` in the
+    caller and the walk continues with the next candidate.
+    """
+    in_string = False
+    escaped = False
+    depth = 0
+    start: Optional[int] = None
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    yield text[start : i + 1]
+                    start = None

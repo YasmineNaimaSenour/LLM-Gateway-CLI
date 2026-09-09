@@ -36,6 +36,10 @@ class OrchestrationResult:
     # message added during it, including the final answer). Feed it back as
     # `messages` for the next turn to continue the conversation.
     messages: List[ChatMessage]
+    # Provider-reported prompt-token count for the turn, when the
+    # backend bills tokens and reports them; None otherwise, in which case
+    # callers fall back to their own client-side count.
+    tokens_in: Optional[int] = None
 
 
 def run_turn(
@@ -68,6 +72,7 @@ def run_turn(
     messages = list(messages)
 
     tokens_out = 0
+    tokens_in: Optional[int] = None
     tool_call_count = 0
     tool_iterations = 0
     response = None
@@ -81,6 +86,7 @@ def run_turn(
                 break  # tool-free final turn — fall through to schema handling below
 
             tokens_out += response.tokens_out
+            tokens_in = response.tokens_in  # last call is billed on the full conversation
             tool_iterations += 1
             messages.append(
                 ChatMessage(role="assistant", content=response.text or None, tool_calls=response.tool_calls)
@@ -120,11 +126,14 @@ def run_turn(
             tool_iterations=tool_iterations,
             attempts=extraction.attempts,
             messages=messages,
+            tokens_in=tokens_in if tokens_in is not None else extraction.tokens_in,
         )
 
     if response is None:
         response = provider.chat(list(messages), temperature=temperature, max_tokens=max_tokens)
     tokens_out += response.tokens_out
+    if response.tokens_in is not None:
+        tokens_in = response.tokens_in
     messages.append(ChatMessage(role="assistant", content=response.text or None))
 
     return OrchestrationResult(
@@ -135,4 +144,5 @@ def run_turn(
         tool_iterations=tool_iterations,
         attempts=1,
         messages=messages,
+        tokens_in=tokens_in,
     )

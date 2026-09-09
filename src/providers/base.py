@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Literal
 
 from ..core.types import ToolCall, ToolSpec
 
@@ -25,7 +25,7 @@ class ChatMessage:
     wire format identifies tool results by name rather than by id).
     """
 
-    role: str  # "system" | "user" | "assistant" | "tool"
+    role: Literal["system", "user", "assistant", "tool"]  # "system" | "user" | "assistant" | "tool"
     content: Optional[str] = None
     tool_calls: Optional[List[ToolCall]] = None
     tool_call_id: Optional[str] = None
@@ -37,12 +37,19 @@ class ChatMessage:
 
 @dataclass
 class ChatResponse:
-    """Final, fully-assembled response for one non-streaming call."""
+    """Final, fully-assembled response for one non-streaming call.
+
+    `tokens_in` is the provider's own count of the prompt tokens it billed
+    (audit #11), or None when the provider doesn't report usage — callers
+    then fall back to client-side counting. `tokens_out` keeps the same
+    fallback behavior locally, since it has always been required.
+    """
 
     text: str
     tokens_out: int
     tool_calls: List[ToolCall] = field(default_factory=list)
     raw: Optional[dict] = None
+    tokens_in: Optional[int] = None
 
 
 class BaseProvider(ABC):
