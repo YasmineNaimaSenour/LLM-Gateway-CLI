@@ -32,16 +32,36 @@ from .registry import register_provider
 
 load_dotenv()
 
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+# Default endpoint, overridable per the audit (#24): GROQ_API_URL as an env
+# var (the .env-style override, like OLLAMA_BASE_URL), or the constructor's
+# api_url argument for programmatic use — which enables Groq-compatible
+# proxies and self-hosted alternatives.
+DEFAULT_GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 @register_provider("groq", default_model="openai/gpt-oss-20b")
 class GroqProvider(BaseProvider):
     name = "groq"
 
-    def __init__(self, model: str = "openai/gpt-oss-20b", api_key: Optional[str] = None, timeout: float = 60.0):
+    def __init__(
+        self,
+        model: str = "openai/gpt-oss-20b",
+        api_key: Optional[str] = None,
+        timeout: Optional[float] = None,
+        api_url: Optional[str] = None,
+    ):
         super().__init__(model)
         self.api_key = api_key or os.environ.get("GROQ_API_KEY")
-        self.timeout = timeout
+        # Precedence: explicit argument > GROQ_TIMEOUT env var > 60s default
+        # (mirrors the Ollama provider's OLLAMA_TIMEOUT; audit #23).
+        env_timeout = os.environ.get("GROQ_TIMEOUT")
+        if timeout is not None:
+            self.timeout = float(timeout)
+        elif env_timeout:
+            self.timeout = float(env_timeout)
+        else:
+            self.timeout = 60.0
+        # Precedence: explicit argument > GROQ_API_URL env var > default.
+        self.api_url = (api_url or os.environ.get("GROQ_API_URL") or DEFAULT_GROQ_API_URL).rstrip("/")
         if not self.api_key:
             raise ModelError(
                 "GROQ_API_KEY is not set. Export it or pass api_key explicitly.",
@@ -108,7 +128,7 @@ class GroqProvider(BaseProvider):
             # failures (connection blips, 5xx); exhaustion re-raises, and the
             # handlers below stay responsible for how the failure is presented.
             return post_with_retry(
-                GROQ_API_URL,
+                self.api_url,
                 payload=payload,
                 headers=self._headers(),
                 timeout=self.timeout,

@@ -34,14 +34,33 @@ from .registry import register_provider
 
 load_dotenv()
 
+# Interactive-friendly default (audit #23): local models are usually fast,
+# and a stuck server should surface as an error in ~a minute, not two. Batch
+# users or slow hardware can raise it via OLLAMA_TIMEOUT — the env var, not
+# the constructor default, is the documented override.
+DEFAULT_OLLAMA_TIMEOUT = 60.0
+
+
 @register_provider("ollama", default_model="llama3.2")
 class OllamaProvider(BaseProvider):
     name = "ollama"
 
-    def __init__(self, model: str = "llama3.2", base_url: Optional[str] = None, timeout: float = 120.0): # timeout should depend on the hardware
+    def __init__(
+        self,
+        model: str = "llama3.2",
+        base_url: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ):
         super().__init__(model)
         self.base_url = (base_url or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")).rstrip("/")
-        self.timeout = timeout
+        # Precedence: explicit argument > OLLAMA_TIMEOUT env var > 60s default.
+        env_timeout = os.environ.get("OLLAMA_TIMEOUT")
+        if timeout is not None:
+            self.timeout = float(timeout)
+        elif env_timeout:
+            self.timeout = float(env_timeout)
+        else:
+            self.timeout = DEFAULT_OLLAMA_TIMEOUT
 
     # -- request building ---------------------------------------------------
 

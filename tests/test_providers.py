@@ -7,8 +7,8 @@ import requests
 from src.core.errors import ErrorType, FormatError, GatewayError, ModelError
 from src.core.types import ToolSpec
 from src.providers.base import ChatMessage
-from src.providers.groq_provider import GroqProvider
-from src.providers.ollama_provider import OllamaProvider
+from src.providers.groq_provider import DEFAULT_GROQ_API_URL, GroqProvider
+from src.providers.ollama_provider import DEFAULT_OLLAMA_TIMEOUT, OllamaProvider
 
 
 def _msg():
@@ -16,6 +16,31 @@ def _msg():
 
 
 _TOOL = ToolSpec(name="calculator", description="add numbers", parameters={"type": "object", "properties": {}})
+
+
+# -- ChatMessage content-only serialization (audit #22) -----------------------
+
+
+def test_to_content_dict_carries_role_and_content_only():
+    # The name is the contract (renamed from to_dict, audit #22): the
+    # tool-calling fields — tool_calls, tool_call_id, name — are deliberately
+    # NOT included. Token counting is the intended consumer; full-fidelity
+    # serialization has its own explicit record format (src/core/session.py).
+    message = ChatMessage(
+        role="assistant",
+        content="calling it",
+        tool_calls=[],
+        tool_call_id="call_1",
+        name="calculator",
+    )
+    assert message.to_content_dict() == {"role": "assistant", "content": "calling it"}
+
+
+def test_to_content_dict_maps_none_content_to_empty_string():
+    # Assistant messages that carry only tool calls have None content; the
+    # empty-string mapping matches what the wire format needs from a
+    # content-only view.
+    assert ChatMessage(role="assistant", content=None).to_content_dict() == {"role": "assistant", "content": ""}
 
 
 # -- Ollama -------------------------------------------------------------------
@@ -235,3 +260,60 @@ def test_groq_forwards_response_schema_as_json_object_mode(mock_post, monkeypatc
 
     sent_payload = mock_post.call_args.kwargs["json"]
     assert sent_payload["response_format"] == {"type": "json_object"}
+
+
+# -- interactive timeout + endpoint configurability (audit #23 / #24) ---------
+
+
+def test_ollama_default_timeout_is_interactive_friendly():
+    # Audit #23: 120s was a batch-appropriate default that left an interactive
+    # user staring at a stuck server for two minutes. The default is now 60s;
+    # OLLAMA_TIMEOUT is the documented override for batch/slow-hardware use.
+    assert OllamaProvider().timeout == 60.0
+    assert OllamaProvider().timeout == DEFAULT_OLLAMA_TIMEOUT
+
+
+def test_ollama_timeout_precedence_argument_over_env(monkeypatch):
+    monkeypatch.setenv("OLLAMA_TIMEOUT", "300")
+    assert OllamaProvider(timeout=15).timeout == 15.0  # explicit argument wins
+
+
+def test_ollama_timeout_from_env(monkeypatch):
+    monkeypatch.setenv("OLLAMA_TIMEOUT", "300")
+    assert OllamaProvider().timeout == 300.0
+
+
+def test_ollama_timeout_accepts_string_env_values(monkeypatch):
+    # Env vars are strings; the provider, not the caller, does the coercion.
+    monkeypatch.setenv("OLLAMA_TIMEOUT", "90")
+    assert OllamaProvider().timeout == 90.0
+
+
+def test_groq_default_timeout_and_env_override(monkeypatch):
+    monkeypatch.delenv("GROQ_TIMEOUT", raising=False)
+    assert GroqProvider(model="m").timeout == 60.0
+    monkeypatch.setenv("GROQ_TIMEOUT", "180")
+    assert GroqProvider(model="m").timeout == 180.0
+    assert GroqProvider(model="m", timeout=10).timeout == 10.0  # argument beats env
+
+
+@patch("src.providers.groq_provider.requests.post")
+def test_groq_posts_to_the_configured_endpoint(mock_post, monkeypatch):
+    # Audit #24: api_url argument > GROQ_API_URL env > official endpoint.
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.delenv("GROQ_API_URL", raising=False)
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+    mock_post.return_value = mock_resp
+
+    GroqProvider(model="m").chat(_msg())
+    assert mock_post.call_args.args[0] == "https://api.groq.com/openai/v1/chat/completions"
+
+    mock_post.reset_mock()
+    GroqProvider(model="m", api_url="http://127.0.0.1:9999/v1/").chat(_msg())
+    assert mock_post.call_args.args[0] == "http://127.0.0.1:9999/v1"  # explicit, trailing / stripped
+
+    monkeypatch.setenv("GROQ_API_URL", "http://proxy.example/v1")
+    mock_post.reset_mock()
+    GroqProvider(model="m").chat(_msg())
+    assert mock_post.call_args.args[0] == "http://proxy.example/v1"  # env override

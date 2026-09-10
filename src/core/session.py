@@ -44,8 +44,8 @@ VALID_ROLES = ("system", "user", "assistant", "tool")
 def _message_to_record(message: ChatMessage) -> Dict[str, Any]:
     """Full-fidelity ChatMessage -> JSON-serializable dict.
 
-    (ChatMessage.to_dict() drops tool fields — audit #22 — so sessions
-    serialize explicitly rather than relying on it.)
+    (ChatMessage.to_content_dict() is deliberately content-only — audit #22 —
+    so sessions serialize explicitly rather than relying on it.)
     """
     record: Dict[str, Any] = {"role": message.role, "content": message.content}
     if message.tool_calls:

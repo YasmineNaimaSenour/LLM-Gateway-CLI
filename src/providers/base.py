@@ -31,7 +31,16 @@ class ChatMessage:
     tool_call_id: Optional[str] = None
     name: Optional[str] = None
 
-    def to_dict(self) -> dict:
+    def to_content_dict(self) -> dict:
+        """Serialize the message's role and text content only.
+
+        Deliberately named for what it does (audit #22): the tool-calling
+        fields — `tool_calls`, `tool_call_id`, `name` — are NOT included.
+        Token counting is the intended consumer (content is all that
+        matters there). For full-fidelity serialization (sessions,
+        transcripts) use the explicit record serializers instead — e.g.
+        src/core/session.py's, which round-trips every field.
+        """
         return {"role": self.role, "content": self.content or ""}
 
 

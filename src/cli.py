@@ -77,6 +77,17 @@ def _add_chat_arguments(parser: argparse.ArgumentParser) -> None:
         help="Which backend to use (any registered provider — see src/providers/registry.py).",
     )
     parser.add_argument("--model", default=None, help="Model name (defaults per-provider).")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        dest="timeout",
+        help=(
+            "Per-request timeout in seconds. Forwarded to providers with a "
+            "timeout knob; otherwise the provider's own default/env configuration "
+            "applies (Ollama: 60s or OLLAMA_TIMEOUT; Groq: 60s or GROQ_TIMEOUT)."
+        ),
+    )
     parser.add_argument("--prompt", required=True, help="User prompt.")
     parser.add_argument("--system", default=None, help="Optional system prompt.")
     parser.add_argument("--temperature", type=float, default=0.7)
@@ -128,6 +139,13 @@ def _add_structured_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--model", default=None, help="Model name (defaults per-provider).")
     parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        dest="timeout",
+        help="Per-request timeout in seconds (same semantics as the chat subcommand's).",
+    )
+    parser.add_argument(
         "--input", required=True, dest="input_path", help="Path to a text file with the input to extract from."
     )
     parser.add_argument(
@@ -170,16 +188,18 @@ def _normalize_argv(argv: List[str]) -> List[str]:
     return ["chat", *argv]
 
 
-def build_provider(provider_name: str, model: Optional[str]) -> BaseProvider:
+def build_provider(provider_name: str, model: Optional[str], timeout: Optional[float] = None) -> BaseProvider:
     """Resolve a provider by name and instantiate it.
 
     A thin adapter over the provider registry (src/providers/registry.py):
     lookup, per-provider model defaulting, and instantiation all live there.
-    Kept as a named function because it's the CLI's single seam for provider
+    `timeout` (--timeout, audit #23) is forwarded; providers without a
+    timeout knob ignore it via the registry's signature check. Kept as a
+    named function because it's the CLI's single seam for provider
     construction — tests patch this, and stderr/log handling keys off the
     args.provider name it's called with.
     """
-    return _registry_get_provider(provider_name, model)
+    return _registry_get_provider(provider_name, model, timeout=timeout)
 
 
 def _split_tool_names(raw: str) -> List[str]:
@@ -275,9 +295,9 @@ def _main_chat(args: argparse.Namespace) -> int:
                 "the session's saved system message takes precedence.",
                 file=sys.stderr,
             )
-        tokens_in = count_message_tokens([m.to_dict() for m in messages])
+        tokens_in = count_message_tokens([m.to_content_dict() for m in messages])
 
-        provider = build_provider(args.provider, args.model)
+        provider = build_provider(args.provider, args.model, timeout=args.timeout)
 
         if registered_tools or schema is not None:
             if args.stream:
@@ -382,7 +402,7 @@ def _main_structured(args: argparse.Namespace) -> int:
         schema = load_and_validate_schema(args.schema_path)
         tokens_in = count_tokens(input_text) + count_tokens(json.dumps(schema))
 
-        provider = build_provider(args.provider, args.model)
+        provider = build_provider(args.provider, args.model, timeout=args.timeout)
         result = run_extraction(
             provider,
             input_text,

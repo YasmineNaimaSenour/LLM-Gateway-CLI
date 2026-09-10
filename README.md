@@ -144,6 +144,15 @@ If using another Ollama host or port, set it in `.env`:
 OLLAMA_BASE_URL=http://localhost:11434
 ```
 
+Per-request timeout defaults to 60 seconds — friendly for interactive use
+(a stuck server errors out in about a minute instead of two). For batch
+jobs or slow hardware, raise it via `OLLAMA_TIMEOUT` in `.env` or the
+`--timeout` flag on any command:
+
+```env
+OLLAMA_TIMEOUT=180
+```
+
 ### Groq
 
 The Groq provider requires a `GROQ_API_KEY`.
@@ -159,6 +168,18 @@ Alternatively, it can be provided as an environment variable:
 ```bash
 export GROQ_API_KEY="your_api_key_here"
 ```
+
+Two further optional settings, both in `.env` or overridable per call via
+the `--timeout` flag:
+
+```env
+GROQ_API_URL=https://api.groq.com/openai/v1/chat/completions
+GROQ_TIMEOUT=60
+```
+
+`GROQ_API_URL` points the provider at a Groq-compatible proxy or
+self-hosted alternative; `GROQ_TIMEOUT` is the per-request timeout in
+seconds.
 
 ## Usage
 

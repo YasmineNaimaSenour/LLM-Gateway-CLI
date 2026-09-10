@@ -20,7 +20,7 @@ from src.providers import (
     unregister_provider,
 )
 from src.providers.groq_provider import GroqProvider
-from src.providers.ollama_provider import OllamaProvider
+from src.providers.ollama_provider import DEFAULT_OLLAMA_TIMEOUT, OllamaProvider
 
 
 class _DummyProvider(BaseProvider):
@@ -112,6 +112,28 @@ def test_get_provider_spec_carries_default_model():
     assert spec.name == "ollama"
     assert spec.cls is OllamaProvider
     assert spec.default_model == "llama3.2"
+
+
+# ---------------------------------------------------------------------------
+# timeout forwarding (audit #23)
+# ---------------------------------------------------------------------------
+
+
+def test_get_provider_forwards_timeout_to_providers_with_a_timeout_knob():
+    # --timeout flows CLI -> build_provider -> registry -> constructor; the
+    # registry detects the knob by constructor signature, so it stays
+    # provider-agnostic (no concrete class imports).
+    provider = get_provider("ollama", None, timeout=33.0)
+    assert provider.timeout == 33.0
+    provider = get_provider("groq", None, timeout=21.0)
+    assert provider.timeout == 21.0
+
+
+def test_get_provider_without_timeout_leaves_provider_defaults_intact():
+    # No --timeout flag: the provider's own env/default precedence applies
+    # (OLLAMA_TIMEOUT, GROQ_TIMEOUT, 60s defaults) — the registry adds nothing.
+    provider = get_provider("ollama", None)
+    assert provider.timeout == DEFAULT_OLLAMA_TIMEOUT
 
 
 # ---------------------------------------------------------------------------

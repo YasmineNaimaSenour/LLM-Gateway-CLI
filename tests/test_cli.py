@@ -339,6 +339,68 @@ def test_cli_tool_loop_error_logs_its_own_error_subtype(mock_build_provider, moc
 
 @patch("src.cli.log_request")
 @patch("src.cli.build_provider")
+def test_cli_stderr_and_log_record_name_the_same_error_class(
+    mock_build_provider, mock_log_request, capsys
+):
+    # Audit #21, pinned: stderr carries `[category:ClassName]` and the JSONL
+    # record carries the same class in error_subtype. Both surfaces must say
+    # the same thing at the same specificity — that agreement IS the
+    # standardized convention, and it holds for every GatewayError because
+    # both are emitted from the single _log_and_report choke point. Verified
+    # here for a tool-loop failure and (below) an extraction failure.
+    mock_provider = mock_build_provider.return_value
+    mock_provider.name = "ollama"
+    tool_call = ToolCall(id="1", name="calculator", arguments={"a": 40, "b": 2, "operation": "add"})
+    mock_provider.chat.side_effect = [
+        ChatResponse(text="", tokens_out=5, tool_calls=[tool_call]),
+        ChatResponse(text="", tokens_out=5, tool_calls=[tool_call]),
+        ChatResponse(text="", tokens_out=5, tool_calls=[tool_call]),
+    ]
+
+    exit_code = main(
+        ["chat", "--provider", "ollama", "--prompt", "loop forever", "--tools", "calculator", "--max-tool-iterations", "2"]
+    )
+
+    assert exit_code == 1
+    kwargs = mock_log_request.call_args.kwargs
+    stderr = capsys.readouterr().err
+    # stderr also carries tool-loop progress lines (#15); find the error line.
+    error_line = next(line for line in stderr.splitlines() if line.startswith("["))
+    assert error_line.startswith(f"[{kwargs['error_type']}:{kwargs['error_subtype']}]")
+    assert kwargs["error_subtype"] == "ToolLoopError"
+    assert "[format:ToolLoopError]" in stderr
+
+
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
+def test_cli_stderr_and_log_agree_for_extraction_failures_too(
+    mock_build_provider, mock_log_request, capsys, tmp_path
+):
+    schema_path = _write(tmp_path, "schema.json", SCHEMA)
+    input_path = _write(tmp_path, "input.txt", "Bob.")
+    mock_provider = mock_build_provider.return_value
+    mock_provider.name = "ollama"
+    mock_provider.chat.return_value = MagicMock(text="still not json", tokens_out=3)
+
+    exit_code = main(
+        [
+            "structured", "--provider", "ollama",
+            "--input", str(input_path), "--schema", str(schema_path),
+            "--max-retries", "0",
+        ]
+    )
+
+    assert exit_code == 1
+    kwargs = mock_log_request.call_args.kwargs
+    stderr = capsys.readouterr().err
+    error_line = next(line for line in stderr.splitlines() if line.startswith("["))
+    assert error_line.startswith(f"[{kwargs['error_type']}:{kwargs['error_subtype']}]")
+    assert kwargs["error_subtype"] == "ExtractionError"
+    assert "[format:ExtractionError]" in stderr
+
+
+@patch("src.cli.log_request")
+@patch("src.cli.build_provider")
 def test_cli_structured_gives_up_after_max_retries_and_reports_error(
     mock_build_provider, mock_log_request, tmp_path
 ):

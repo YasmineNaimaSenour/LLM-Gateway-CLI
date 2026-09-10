@@ -18,11 +18,24 @@ an unrelated module.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Type
 
 from ..core.errors import FormatError
 from .base import BaseProvider
+
+
+def _init_params(cls: type) -> set:
+    """Parameter names of a provider class's constructor.
+
+    Used for capability detection ("does this provider accept a timeout?")
+    without importing concrete provider classes into the registry.
+    """
+    try:
+        return set(inspect.signature(cls.__init__).parameters)
+    except (TypeError, ValueError):  # builtins/C-level constructors
+        return set()
 
 
 @dataclass(frozen=True)
@@ -73,15 +86,24 @@ class ProviderRegistry:
             raise FormatError(f"Unknown provider: {name!r}. Available providers: {available}.")
         return spec
 
-    def get_provider(self, name: str, model: Optional[str] = None) -> BaseProvider:
+    def get_provider(
+        self, name: str, model: Optional[str] = None, *, timeout: Optional[float] = None
+    ) -> BaseProvider:
         """Instantiate a provider, falling back to its registered default model.
 
-        Raises FormatError for an unregistered name. Construction errors
-        (missing API keys, etc.) propagate from the provider's own __init__
-        and are the provider's business, not the registry's.
+        `timeout`, when given, is forwarded to providers whose constructor
+        accepts a request-timeout knob (detected by signature, so the
+        registry stays provider-agnostic — no concrete class imports here;
+        both built-ins currently accept one, audit #23). Raises FormatError
+        for an unregistered name. Construction errors (missing API keys,
+        etc.) propagate from the provider's own __init__ and are the
+        provider's business, not the registry's.
         """
         spec = self.get_provider_spec(name)
-        return spec.cls(model=model or spec.default_model)
+        kwargs: Dict[str, object] = {}
+        if timeout is not None and "timeout" in _init_params(spec.cls):
+            kwargs["timeout"] = timeout
+        return spec.cls(model=model or spec.default_model, **kwargs)
 
     def provider_names(self) -> List[str]:
         """All registered provider names (sorted)."""
