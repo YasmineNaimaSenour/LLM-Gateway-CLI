@@ -1,244 +1,90 @@
 # LLM Gateway CLI
 
-Provider-agnostic CLI gateway over **Ollama** (local) and **Groq** (hosted),
-built as a provider-agnostic LLM gateway for experimentation, structured
-generation, tool calling, and eventually evaluation of LLM workloads.
+A provider-agnostic command-line gateway for LLM experimentation. One tool, two backends — **Ollama** (local, free, offline) and **Groq** (hosted, fast) — with uniform behavior on top: chat (streaming or not), structured output from a JSON Schema, tool calling, multi-turn sessions, and a structured log line for every request.
 
-## Setup
+Why it exists: experimenting with LLMs usually means rewriting the same plumbing per provider (different HTTP shapes, error dialects, streaming formats, structured-output support). This project centralizes that plumbing once, so switching providers is a `--provider` flag and every request is measurable and logged the same way.
 
-Install the Python dependencies (runtime only — see the note below for
-development work):
+**Key features**
 
-```bash
-pip install -r requirements.txt
-```
+- **Chat** with any registered provider — streaming or non-streaming
+- **Structured output:** text + JSON Schema → validated JSON (`structured` command, or `chat --schema`), with automatic validate-and-retry
+- **Tool calling:** expose registered Python functions to the model (`--tools`), with a bounded execution loop
+- **Multi-turn sessions:** continue one conversation across CLI invocations (`--session`)
+- **Observability:** one JSONL record per request (latency, tokens, temperature, status, error taxonomy, tool-call counts) in `logs/requests.jsonl`
+- **Reliability:** transient-failure retry with backoff, a five-category error taxonomy, and a CLI that never crashes
+- **Extensible:** add a provider or a tool in one file — no CLI edits
 
-For development (adds the test suite's dependencies):
+## Requirements
 
-```bash
-pip install -r requirements-dev.txt
-```
+- Python **3.10+**
+- For the `ollama` provider: a running [Ollama](https://ollama.com) server (native or Docker) with a pulled model (default: `llama3.2`)
+- For the `groq` provider: a Groq API key
 
-Create the environment file:
-
-```bash
-cp .env.example .env
-```
-
-Add `GROQ_API_KEY` to `.env` if you plan to use Groq.
-
-### Ollama
-
-The Ollama provider requires an Ollama server running locally and the `llama3.2` model to be available.
-
-#### Option 1: Native Ollama installation
-
-Install Ollama for your operating system, then start the server:
+## Installation
 
 ```bash
-ollama serve
+pip install -r requirements.txt        # runtime
+pip install -r requirements-dev.txt    # development (adds pytest)
+cp .env.example .env                   # then edit
 ```
 
-In another terminal, download the model:
+### Ollama setup
+
+Native: `ollama serve`, then `ollama pull llama3.2` — or Docker:
 
 ```bash
-ollama pull llama3.2
-```
-
-The default Ollama endpoint is:
-
-```text
-http://localhost:11434
-```
-
-Keep the Ollama server running while using the CLI.
-
-#### Option 2: Ollama with Docker
-
-Docker can be used to run Ollama in an isolated container.
-
-Start the container:
-
-```bash
-docker run -d \
-  --gpus=all \
-  -v ollama:/root/.ollama \
-  -p 11434:11434 \
-  --name ollama \
-  ollama/ollama
-```
-
-Then download the model inside the container:
-
-```bash
+docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
 docker exec -it ollama ollama pull llama3.2
 ```
 
-The model is stored in the Docker volume `ollama`, so it remains available when the container is stopped and started again.
+(No compatible GPU? Drop `--gpus=all`. The CLI talks to the same `http://localhost:11434` either way.)
 
-Check that the container is running:
+### Groq setup
 
-```bash
-docker ps
-```
+Set `GROQ_API_KEY=your_api_key_here` in `.env` (or export it as an environment variable).
 
-To stop Ollama:
+### Configuration (`.env`)
 
-```bash
-docker stop ollama
-```
+| Variable | Default | Purpose |
+|---|---|---|
+| `GROQ_API_KEY` | *(required for Groq)* | Groq API key |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server address |
+| `OLLAMA_TIMEOUT` | `60` | Per-request timeout (seconds) |
+| `GROQ_TIMEOUT` | `60` | Per-request timeout (seconds) |
+| `GROQ_API_URL` | official endpoint | Point Groq at a compatible proxy |
+| `LLM_GATEWAY_LOG_PATH` | `logs/requests.jsonl` | Request log location |
 
-To start the existing container again:
+Any per-request value can also be set ad hoc with `--timeout` on either subcommand.
 
-```bash
-docker start ollama
-```
-
-To check its logs:
-
-```bash
-docker logs ollama
-```
-
-To remove the container:
-
-```bash
-docker rm ollama
-```
-
-**Note:** Removing the container does not remove the `ollama` Docker volume, so downloaded models remain available. To remove the models as well, remove the volume:
-
-```bash
-docker volume rm ollama
-```
-
-### GPU support with Docker
-
-The Docker setup above uses:
-
-```bash
---gpus=all
-```
-
-This allows Ollama to access a compatible NVIDIA GPU from inside the container. NVIDIA Container Toolkit must be installed and configured on the host.
-
-For systems without a compatible GPU, remove `--gpus=all`:
-
-```bash
-docker run -d \
-  -v ollama:/root/.ollama \
-  -p 11434:11434 \
-  --name ollama \
-  ollama/ollama
-```
-
-The CLI itself does not need to know whether Ollama is running natively or inside Docker. Both expose the same HTTP API at:
-
-```text
-http://localhost:11434
-```
-
-If using another Ollama host or port, set it in `.env`:
-
-```env
-OLLAMA_BASE_URL=http://localhost:11434
-```
-
-Per-request timeout defaults to 60 seconds — friendly for interactive use
-(a stuck server errors out in about a minute instead of two). For batch
-jobs or slow hardware, raise it via `OLLAMA_TIMEOUT` in `.env` or the
-`--timeout` flag on any command:
-
-```env
-OLLAMA_TIMEOUT=180
-```
-
-### Groq
-
-The Groq provider requires a `GROQ_API_KEY`.
-
-Set it in `.env`:
-
-```env
-GROQ_API_KEY=your_api_key_here
-```
-
-Alternatively, it can be provided as an environment variable:
-
-```bash
-export GROQ_API_KEY="your_api_key_here"
-```
-
-Two further optional settings, both in `.env` or overridable per call via
-the `--timeout` flag:
-
-```env
-GROQ_API_URL=https://api.groq.com/openai/v1/chat/completions
-GROQ_TIMEOUT=60
-```
-
-`GROQ_API_URL` points the provider at a Groq-compatible proxy or
-self-hosted alternative; `GROQ_TIMEOUT` is the per-request timeout in
-seconds.
+> `LLM_GATEWAY_LOG_PATH` is read from the process environment at import time (before `.env` is loaded) — export it in your shell rather than putting it in `.env`.
 
 ## Usage
 
 ### Chat
 
-The `chat` subcommand can be omitted — `python -m src.cli --provider ... --prompt ...`
-still works for backward compatibility, but `chat` is the explicit form. The
-implicit form is **deprecated**: each use prints a stderr warning, and it will
-be removed in a future release. Update scripts to say `chat` explicitly.
-
-#### Non-streaming
-
 ```bash
 python -m src.cli chat --provider ollama --prompt "Explain TCP handshakes"
-```
 
-See [Multi-turn chat (sessions)](#multi-turn-chat-sessions) for continuing a
-conversation across CLI invocations with `--session`.
-
-#### Streaming
-
-```bash
+# streaming, system prompt, sampling controls
 python -m src.cli chat --provider groq --model openai/gpt-oss-20b \
     --system "You are terse." --prompt "Explain TCP handshakes" \
     --temperature 0.2 --max-tokens 200 --stream
 ```
 
-### Multi-turn chat (sessions)
+`--provider` is required; `--model` defaults per provider (`llama3.2` / `openai/gpt-oss-20b`).
 
-`chat` is stateless by default: one prompt in, one response out. Add
-`--session <file>` to make consecutive CLI calls continue one conversation:
+> The old flat form (`python -m src.cli --provider ... --prompt ...`) still works but is **deprecated** and prints a warning; say `chat` explicitly.
+
+### Multi-turn sessions
 
 ```bash
 python -m src.cli chat --provider ollama --session chats/demo.jsonl --prompt "Hi, I'm Bob."
 python -m src.cli chat --provider ollama --session chats/demo.jsonl --prompt "What's my name?"
 ```
 
-The session file is append-only JSONL — one line per `ChatMessage`, exactly
-the transcript the orchestrator returns for a turn — so it is inspectable
-with `cat`/`jq` and crash-safe (a process dying mid-write loses at most the
-torn trailing line, which is skipped on load). Everything is persisted at
-full fidelity: system messages, assistant tool calls, and tool results, so
-a tool-calling conversation resumes with its complete context.
-
-Notes:
-
-* A failed turn is never persisted — the file only grows on success, so
-  retrying the same command resumes cleanly.
-* On a continuation turn `--system` and `--schema` are not re-injected
-  (the session already carries the system/schema-instruction messages from
-  the turn that created it); passing them again just prints a note on
-  stderr and is otherwise ignored.
+The session file is append-only JSONL holding the full transcript (system messages, tool calls and results included), so it's inspectable with `cat`/`jq` and crash-safe. Failed turns are never persisted. On a continuation turn, `--system` and `--schema` are not re-injected.
 
 ### Structured output during chat
-
-Add `--schema` to a normal `chat` call to force the final answer to
-conform to a JSON Schema. Reuses the same schema file format (and the same
-validate-and-retry loop) as the `structured` command below, so the schemas
-in `examples/structured/` work here too:
 
 ```bash
 python -m src.cli chat --provider groq \
@@ -246,48 +92,9 @@ python -m src.cli chat --provider groq \
     --schema examples/structured/person_schema.json
 ```
 
-Where possible the schema is also passed to the provider as a native hint
-(Ollama gets grammar-constrained decoding via its `format` field; Groq gets
-`response_format: json_object`) to cut down on retries — but the result is
-always validated and retried gateway-side regardless, so behavior is
-identical across providers even though reliability under the hood differs.
-
-### Tool calling
-
-Add `--tools` (comma-separated names) to let the model call functions
-mid-conversation. The gateway runs the request/response loop — sending the
-tools, executing whichever ones the model calls, feeding results back —
-until the model gives a final, tool-free answer or `--max-tool-iterations`
-(default `8`) is hit:
-
-```bash
-python -m src.cli chat --provider ollama \
-    --prompt "What's 40 + 2? Also, what time is it in Tokyo?" \
-    --tools calculator,current_time
-```
-
-Built-in tools live in `src/tools/registry.py` (currently `calculator` and
-`current_time`) — it's a small, explicit, in-repo registry rather than a
-plugin system; add a tool by writing a Pydantic model for its arguments and
-decorating a function with `@register(...)`.
-
-`--tools` and `--schema` can be combined: the model uses tools as needed,
-then its final answer is validated against the schema. `--stream` is
-ignored (with a one-line notice on stderr) whenever `--tools` or `--schema`
-are set — tool-bearing and schema-coerced turns are always non-streaming.
+Prints the validated JSON. The schema is also passed to the provider as a native hint when possible (Ollama grammar-constrained decoding, Groq `json_object` mode) to cut retries — gateway-side validation always runs either way, so behavior is identical across providers.
 
 ### Structured extraction
-
-`gateway structured` extracts structured data from arbitrary text using a
-JSON Schema you supply — no code, just a schema file. Unlike `chat
---schema` above, it takes input from a file rather than a live prompt and
-never uses tools; internally both share the same validation/retry core
-(`structured/extractor.py`):
-
-```text
-input text + JSON Schema → validate schema → convert schema to a Pydantic model
-    → structured LLM generation → validated result
-```
 
 ```bash
 python -m src.cli structured \
@@ -296,183 +103,100 @@ python -m src.cli structured \
     --schema examples/structured/person_schema.json
 ```
 
-```json
-{
-  "name": "Ada Lovelace",
-  "age": 36,
-  "occupation": "mathematician and writer",
-  "role": null,
-  "skills": ["mathematics", "analytical reasoning", "algorithm design"],
-  "address": {
-    "city": "London",
-    "country": "England"
-  }
-}
-```
+Extracts from a text file and prints validated JSON (or writes it with `--output result.json`). Key flags: `--input` (required), `--schema` (required), `--output`, `--max-retries` (default 2), `--temperature` (default **0.0** — extraction wants determinism), `--max-tokens`.
 
-Useful flags:
+More example schema/input pairs in `examples/structured/` (each demonstrates different features; guarded by tests):
 
-| Flag             | Meaning                                                              |
-|------------------|-----------------------------------------------------------------------|
-| `--input`        | Path to a text file to extract from (required)                       |
-| `--schema`       | Path to a JSON Schema file describing the target shape (required)     |
-| `--provider`     | `ollama` or `groq` (required)                                        |
-| `--model`        | Model name (defaults per-provider, same as `chat`)                   |
-| `--output`       | Write the result to a file instead of stdout                         |
-| `--max-retries`  | Retries on unparsable/invalid model output before giving up (default `2`) |
-| `--temperature`  | Defaults to `0.0` (extraction wants determinism, not creativity)     |
-| `--max-tokens`   | Same as `chat` (default `512`)                                       |
+| Example | Demonstrates |
+|---|---|
+| `person_schema.json` | nested objects, arrays, nullable fields |
+| `release_notes_schema.json` | nested objects, arrays of objects, string enums, patterns |
+| `ticket_schema.json` | enums, nullable strings with patterns, booleans |
+| `weather_schema.json` | nullable numbers, enums, nested location |
 
-Save the result to a file:
+### Tool calling
 
 ```bash
-python -m src.cli structured \
-    --provider groq --model openai/gpt-oss-20b \
-    --input examples/structured/person_input.txt \
-    --schema examples/structured/person_schema.json \
-    --output result.json --max-retries 3
+python -m src.cli chat --provider ollama \
+    --prompt "What's 40 + 2? Also, what time is it in Tokyo?" \
+    --tools calculator,current_time
 ```
 
-More ready-to-run example pairs live in `examples/structured/`, each
-demonstrating different parts of the supported subset (every schema is
-guarded by tests, so they can't rot):
+The gateway offers the named tools to the model, executes the calls it makes, and feeds results back until a final answer (or `--max-tool-iterations`, default 8). Built-in tools: `calculator`, `current_time`. Tool failures (bad arguments, runtime errors) are fed back to the model as error messages rather than aborting the run.
 
-| Example                        | Demonstrates                                              |
-|--------------------------------|-----------------------------------------------------------|
-| `person_schema.json`           | nested objects, arrays, nullable fields                   |
-| `release_notes_schema.json`    | nested objects, arrays of objects, string enums, patterns |
-| `ticket_schema.json`           | enums, nullable strings with patterns, booleans           |
-| `weather_schema.json`          | nullable numbers, enums, nested location                  |
+Notes:
 
-#### Supported JSON Schema subset
+- `--tools` and `--schema` can be combined: tools first, schema-validated final answer.
+- `--stream` is ignored (with a stderr notice) whenever `--tools` or `--schema` is set — those turns are always non-streaming, with progress shown on stderr instead.
+- Tool-loop progress (`… thinking (round 1)`, `… calling tool: calculator`) goes to stderr; stdout carries only the answer.
 
-The gateway converts your schema into an internal Pydantic model, so it
-supports a deliberate initial subset of JSON Schema rather than the full
-specification:
+### Supported JSON Schema subset
 
-| Feature                       | Supported |
-|--------------------------------|:---------:|
-| `type`: object, string, integer, number, boolean, array | Yes |
-| Nested objects / arrays (arbitrary depth)                | Yes |
-| `properties`, `required`                                 | Yes |
-| `additionalProperties` (boolean only)                    | Yes |
-| `enum` (on any type)                                      | Yes |
-| `description` (must be a string, validated at every level)  | Yes |
-| Nullable types via `"type": [<type>, "null"]`             | Yes |
-| String: `minLength`, `maxLength`, `pattern`               | Yes |
-| Number/integer: `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` | Yes |
-| Array: `items` (single schema), `minItems`, `maxItems`    | Yes |
-| `$ref` / `$defs` / `definitions`                          | No |
-| `oneOf` / `anyOf` / `allOf` / `not` / `if`-`then`-`else`   | No |
-| `const`, `multipleOf`                                     | No |
-| `patternProperties`, schema-valued `additionalProperties` | No |
-| Tuple-style `items` (a list of schemas)                   | No |
-| Root schema that isn't `"type": "object"`                 | No |
+Schemas are converted to an internal Pydantic model, so a deliberate subset of JSON Schema is supported:
 
-The gateway distinguishes two different ways a `--schema` file can fail,
-both surfaced as `[format:<ClassName>]` on stderr:
+| Feature | Supported |
+|---|:---:|
+| object, string, integer, number, boolean, array | ✅ |
+| Nested objects / arrays (arbitrary depth) | ✅ |
+| `properties`, `required` | ✅ |
+| `additionalProperties` (boolean only) | ✅ |
+| `enum` (on any type) | ✅ |
+| `description` (string, validated at every level) | ✅ |
+| Nullable types via `"type": [<type>, "null"]` | ✅ |
+| String `minLength` / `maxLength` / `pattern` | ✅ |
+| Number/integer `minimum` / `maximum` / `exclusiveMinimum` / `exclusiveMaximum` | ✅ |
+| Array `items` (single schema), `minItems`, `maxItems` | ✅ |
+| `$ref` / `$defs` / `definitions` | ❌ |
+| `oneOf` / `anyOf` / `allOf` / `not` / `if`-`then`-`else` | ❌ |
+| `const`, `multipleOf` | ❌ |
+| `patternProperties`, schema-valued `additionalProperties` | ❌ |
+| Tuple-style `items` | ❌ |
+| Root schema that isn't `"type": "object"` | ❌ |
 
-* **`SchemaError`** — the file isn't valid JSON Schema at all (bad JSON,
-  malformed keywords, etc.), checked via the `jsonschema` library's
-  meta-schema validation.
-* **`UnsupportedSchemaError`** — it *is* valid JSON Schema, but uses a
-  feature outside the table above (e.g. `$ref`, `oneOf`).
-* **`ExtractionError`** — the schema was fine, but the model's output never
-  became valid JSON matching it, even after `--max-retries` attempts.
+Three distinct schema-related errors, all reported as `[format:<Class>]` on stderr: `SchemaError` (not valid JSON Schema), `UnsupportedSchemaError` (valid but uses an unsupported feature), `ExtractionError` (model never produced valid JSON matching the schema within `--max-retries`).
 
-All three are `FormatError` subclasses (see `src/core/errors.py`), so they
-still log under the same five-category taxonomy (`rate_limit | context |
-format | model | unknown`) as everything else — they're just distinguishable
-by exception type for callers that care.
+## Project structure
+
+```text
+src/
+├── cli.py             # entry point: argument parsing + I/O only
+├── token_utils.py     # pre-request token counting (tiktoken → heuristic fallback)
+├── core/              # orchestrator (tool loop + schema coercion), sessions,
+│                      # error taxonomy, JSONL logging, telemetry, shared types
+├── providers/         # BaseProvider interface, registry, shared retry transport,
+│                      # ollama_provider.py, groq_provider.py
+├── structured/        # JSON Schema → Pydantic → validate-and-retry extraction
+└── tools/             # in-repo tool registry + executor (calculator, current_time)
+examples/structured/   # four schema + input example pairs (test-guarded)
+experiments/           # measurement templates (sampling variance, context, failures)
+tests/                 # pytest suite — fully offline, providers mocked
+```
+
+## Testing
+
+```bash
+python -m pytest -q    # 227 tests, no network or API keys required
+```
+
+## Documentation
+
+- **`REPORT.md`** — the full technical report: architecture, design rationale, decisions and trade-offs, limitations, and roadmap. Read this before modifying the system.
+- **`context/`** — condensed, topic-organized notes (architecture, conventions, decisions, gotchas, current state), optimized as working context for AI assistants.
+- Source docstrings — per-module design rationale, kept next to the code.
 
 ## Adding a provider
 
-Providers are discovered through a registry (`src/providers/registry.py`), not
-hardcoded in the CLI. The registry mirrors the tool registry (`src/tools/registry.py`):
-a provider registers itself at import time and becomes a first-class `--provider`
-choice — argparse choices, model defaulting, instantiation — with zero CLI edits:
+Implement `BaseProvider`, decorate the class, and import the module once — the CLI picks it up automatically (argparse choices, model defaulting, instantiation):
 
 ```python
 # src/providers/my_provider.py
 from .base import BaseProvider
 from .registry import register_provider
 
-
 @register_provider("myprovider", default_model="my-model-7b")
 class MyProvider(BaseProvider):
     name = "myprovider"
-    ...
+    # implement chat() and chat_stream()
 ```
 
-Then make sure the module is imported once (list it in
-`src/providers/__init__.py`, as the built-ins do) and `--provider myprovider`
-works, with `--model` defaulting to `my-model-7b` when not given.
-
-## What it does
-
-* Switches between providers behind one `BaseProvider` interface (`src/providers/`);
-  new backends self-register via `@register_provider` (see "Adding a provider" below)
-* Supports both streaming and non-streaming chat responses
-* Extracts structured data from text against a user-supplied JSON Schema
-  (`gateway structured`), or enforces a schema on a live `chat` answer
-  (`chat --schema`) — both go through the same validate-and-retry core
-  (`structured/extractor.py`), not two separate implementations
-* Runs a tool-calling loop (`chat --tools`): offers tools to the model,
-  executes whichever ones it calls via an in-repo registry
-  (`src/tools/`), and feeds results back until it gets a final answer
-* Supports multi-turn chat (`chat --session <file>`): prior history is
-  loaded from and the completed turn is appended to an append-only JSONL
-  session file (`src/core/session.py`), so consecutive CLI calls continue
-  one conversation — including tool-calling sessions
-* Uses native provider capabilities where available (Ollama's
-  schema-constrained `format` decoding, Groq's `json_object` mode) as a
-  reliability optimization — gateway-side validation still always runs,
-  so behavior stays identical across providers
-* Counts input tokens before every request (via `tiktoken`, falling back to a heuristic);
-  when a provider reports its own billed `prompt_tokens` in the response, that
-  count is preferred in the log instead, and the record states how a client-side
-  count was produced (`token_count_method: "tiktoken" | "heuristic"`, null when
-  the count came from the provider)
-* Measures request latency
-* Retries transient provider failures (connection blips, HTTP 500/502/503/504)
-  with exponential backoff and a stderr notice per retry
-  (`src/providers/http_utils.py`); 429 and other permanent errors are never
-  retried — they already classify and log correctly
-* Never crashes: every failure is classified into `rate_limit | context | format | model | unknown`
-  and logged, with a friendly message on stderr and a non-zero exit code
-* Appends one structured JSON record per request to `logs/requests.jsonl`,
-  including tool-call counts when `--tools` was used
-
-## Repository layout
-
-```text
-src/
-├── providers/        # base.py (interface) + registry.py + http_utils.py (shared retry transport) + ollama_provider.py + groq_provider.py
-├── core/
-│   ├── types.py          # provider-agnostic ToolSpec / ToolCall / ToolResult
-│   ├── orchestrator.py    # run_turn(): the tool-call loop + schema coercion, shared by chat & structured
-│   ├── session.py         # --session persistence: append-only JSONL conversation transcripts
-│   ├── errors.py          # five-category error taxonomy
-│   ├── logger.py          # JSONL request logging
-│   └── telemetry.py       # request timing
-├── structured/        # JSON Schema -> Pydantic -> validated extraction (see above)
-│   ├── schema.py         # load + meta-validate + supported-subset check
-│   ├── model_builder.py  # JSON Schema (subset) -> Pydantic model (internal detail)
-│   └── extractor.py      # coerce_to_schema(): validate -> retry loop, via BaseProvider.chat()
-├── tools/             # in-repo tool registry + executor (not a plugin system)
-│   ├── registry.py        # @register-decorated tools (calculator, current_time, ...)
-│   └── executor.py        # runs a ToolCall, never raises past itself
-├── token_utils.py     # pre-request token counting
-└── cli.py             # entry point / argument parsing + I/O only (chat + structured subcommands)
-examples/
-└── structured/        # four schema + input example pairs (person, release notes,
-                        # support ticket, weather) covering the supported subset
-experiments/           # sampling variance, context behavior, and failure-case logs
-tests/                 # pytest suite (providers mocked, no network required)
-```
-
-## Tests
-
-```bash
-python -m pytest -q
-```
+Then add `from . import my_provider as _my_provider  # noqa: F401` to `src/providers/__init__.py`. See `REPORT.md` §15 for the complete recipe and contracts.
