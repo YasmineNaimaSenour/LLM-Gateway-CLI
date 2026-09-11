@@ -181,8 +181,6 @@ python -m pytest -q    # 227 tests, no network or API keys required
 ## Documentation
 
 - **`REPORT.md`** — the full technical report: architecture, design rationale, decisions and trade-offs, limitations, and roadmap. Read this before modifying the system.
-- **`context/`** — condensed, topic-organized notes (architecture, conventions, decisions, gotchas, current state), optimized as working context for AI assistants.
-- Source docstrings — per-module design rationale, kept next to the code.
 
 ## Adding a provider
 
