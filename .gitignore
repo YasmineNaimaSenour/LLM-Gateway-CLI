@@ -4,8 +4,7 @@ __pycache__/
 logs/*.jsonl
 .pytest_cache/
 *.egg-info/
-result.json
-AUDIT.md
+trash/
 
 .venv/
 
@@ -14,3 +13,6 @@ chats/
 
 # Local Freebuff client state
 .freebuff/
+
+# context
+context/
