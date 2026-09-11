@@ -1,4 +1,4 @@
-"""CLI-level tests for the multi-turn session feature (--session, AUDIT #2).
+"""CLI-level tests for the multi-turn session feature (--session).
 
 SessionStore unit tests live in test_session.py; this file covers the CLI
 wiring: history loading, transcript persistence, failure semantics, and the

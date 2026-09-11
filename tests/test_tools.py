@@ -18,7 +18,7 @@ def test_get_tools_raises_format_error_for_unknown_name():
 
 
 def test_private_registry_instances_are_isolated_from_the_default():
-    # audit #8: registry state is instance-level, so tests (or a future
+    # Registry state is instance-level, so tests (or a future
     # server mode) can hold independent registries without touching the
     # module-level default that the built-in tools register on.
     private = ToolRegistry()

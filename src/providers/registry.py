@@ -5,7 +5,7 @@ Once the defining module is imported, the provider is first-class: the CLI's
 `--provider` choices, `--model` defaulting, and instantiation all flow from
 this registry, and the CLI needs zero edits.
 
-Like the tool registry (audit #8), registry mechanics live in a class whose
+Like the tool registry, registry mechanics live in a class whose
 state is instance-level; a single module-level `DEFAULT_REGISTRY` instance
 preserves the import-time registration flow, and the module-level function
 aliases keep every existing call site unchanged. The registry holds
@@ -94,7 +94,7 @@ class ProviderRegistry:
         `timeout`, when given, is forwarded to providers whose constructor
         accepts a request-timeout knob (detected by signature, so the
         registry stays provider-agnostic — no concrete class imports here;
-        both built-ins currently accept one, audit #23). Raises FormatError
+        both built-ins currently accept one). Raises FormatError
         for an unregistered name. Construction errors (missing API keys,
         etc.) propagate from the provider's own __init__ and are the
         provider's business, not the registry's.

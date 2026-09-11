@@ -1,4 +1,4 @@
-"""Tests for the provider registry (audit #5): the mechanism that lets a
+"""Tests for the provider registry: the mechanism that lets a
 new backend become first-class — argparse choices, model defaulting,
 instantiation — with zero CLI edits, provided its module gets imported.
 """
@@ -115,7 +115,7 @@ def test_get_provider_spec_carries_default_model():
 
 
 # ---------------------------------------------------------------------------
-# timeout forwarding (audit #23)
+# timeout forwarding
 # ---------------------------------------------------------------------------
 
 

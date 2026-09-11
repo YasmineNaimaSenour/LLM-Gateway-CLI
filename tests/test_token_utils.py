@@ -1,5 +1,5 @@
 """Tests for token counting utilities, including the count-method reporting
-that feeds the `token_count_method` log field (audit #13)."""
+that feeds the `token_count_method` log field."""
 
 from src.token_utils import (
     METHOD_HEURISTIC,

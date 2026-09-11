@@ -32,11 +32,12 @@ from .registry import register_provider
 
 load_dotenv()
 
-# Default endpoint, overridable per the audit (#24): GROQ_API_URL as an env
+# Default endpoint, overridable via GROQ_API_URL as an env
 # var (the .env-style override, like OLLAMA_BASE_URL), or the constructor's
 # api_url argument for programmatic use — which enables Groq-compatible
 # proxies and self-hosted alternatives.
 DEFAULT_GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
 
 @register_provider("groq", default_model="openai/gpt-oss-20b")
 class GroqProvider(BaseProvider):
@@ -52,7 +53,7 @@ class GroqProvider(BaseProvider):
         super().__init__(model)
         self.api_key = api_key or os.environ.get("GROQ_API_KEY")
         # Precedence: explicit argument > GROQ_TIMEOUT env var > 60s default
-        # (mirrors the Ollama provider's OLLAMA_TIMEOUT; audit #23).
+        # (mirrors the Ollama provider's OLLAMA_TIMEOUT).
         env_timeout = os.environ.get("GROQ_TIMEOUT")
         if timeout is not None:
             self.timeout = float(timeout)
@@ -77,7 +78,8 @@ class GroqProvider(BaseProvider):
     def _message_payload(m: ChatMessage) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"role": m.role, "content": m.content or ""}
         if m.role == "assistant" and m.tool_calls:
-            payload["content"] = m.content  # OpenAI-style: null/empty content alongside tool_calls is normal
+            # OpenAI-style: null/empty content alongside tool_calls is normal.
+            payload["content"] = m.content
             payload["tool_calls"] = [
                 {
                     "id": tc.id,
@@ -185,7 +187,7 @@ class GroqProvider(BaseProvider):
             text = message.get("content") or ""
             usage = data.get("usage", {})
             tokens_out = usage.get("completion_tokens") or count_tokens(text)
-            tokens_in = usage.get("prompt_tokens")  # provider-billed count (audit #11); None if unreported
+            tokens_in = usage.get("prompt_tokens")  # provider-billed count; None if unreported
         except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
             raise FormatError(f"Unexpected Groq response shape: {exc}", provider=self.name, cause=exc)
 

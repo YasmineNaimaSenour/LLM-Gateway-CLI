@@ -24,14 +24,16 @@ class Timer:
         self._end = time.perf_counter()
         return self
 
-    @property # use property to enable lazy evaluation. that is, we only compute the elapsed time when it's accessed, and treat it as a read-only attribute.
+    # Property (not a plain attribute) so elapsed time is computed lazily,
+    # only when read, and stays read-only.
+    @property
     def elapsed_ms(self) -> float:
         """Milliseconds elapsed. Safe to read before stop() (returns running total)."""
         end = self._end if self._end >= self._start else time.perf_counter()
         return round((end - self._start) * 1000, 2)
 
 
-# this is merely a wrapper around Timer
+# Thin convenience wrapper around Timer: same clock, context-manager form.
 @contextmanager
 def measure_latency() -> Iterator[Timer]:
     """Context manager yielding a Timer whose elapsed_ms is finalized on exit."""

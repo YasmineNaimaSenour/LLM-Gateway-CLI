@@ -34,7 +34,7 @@ from .registry import register_provider
 
 load_dotenv()
 
-# Interactive-friendly default (audit #23): local models are usually fast,
+# Interactive-friendly default: local models are usually fast,
 # and a stuck server should surface as an error in ~a minute, not two. Batch
 # users or slow hardware can raise it via OLLAMA_TIMEOUT — the env var, not
 # the constructor default, is the documented override.
@@ -168,7 +168,7 @@ class OllamaProvider(BaseProvider):
 
         tool_calls = self._parse_tool_calls(message)
         # Ollama reports prompt usage on the final non-streaming chunk;
-        # surface tokens_in when present (audit #11), else None so callers
+        # surface tokens_in when present, else None so callers
         # fall back to client-side counting.
         prompt_eval_count = data.get("prompt_eval_count")
         return ChatResponse(

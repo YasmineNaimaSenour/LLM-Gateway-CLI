@@ -78,7 +78,7 @@ def test_log_request_error_subtype_defaults_to_none_and_round_trips(tmp_path):
 
 
 def test_log_request_includes_token_count_method_field(tmp_path):
-    # audit #13: records state HOW tokens_in was counted, so analysis can
+    # The field records HOW tokens_in was counted, so analysis can
     # tell tiktoken from the heuristic fallback from provider-billed counts.
     log_path = tmp_path / "requests.jsonl"
 
@@ -109,7 +109,7 @@ def test_log_request_includes_token_count_method_field(tmp_path):
     assert provider_record["token_count_method"] is None
 
 
-# -- logger hardening (audit #14) -------------------------------------------
+# -- logger hardening --------------------------------------------------------
 
 
 def test_log_request_includes_tool_fields_when_set(tmp_path):

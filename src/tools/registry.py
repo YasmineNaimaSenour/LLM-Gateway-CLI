@@ -7,7 +7,7 @@ or as a raw JSON Schema dict (reuses the same schema/model_builder pipeline
 already built for structured outputs, so there's exactly one JSON-Schema
 subset and one validation path in the whole codebase).
 
-Registry mechanics live in the `ToolRegistry` class (audit #8): the state
+Registry mechanics live in the `ToolRegistry` class: the state
 is instance-level, so a server mode or parallel test runner can hold
 independent registries instead of sharing one process-global dict. A single
 module-level `DEFAULT_REGISTRY` instance preserves the existing
@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from ..core.errors import FormatError
 from ..core.types import ToolSpec
-from ..structured import build_model, check_supported_subset  # declared package API (audit #20)
+from ..structured import build_model, check_supported_subset  # the package's declared API
 
 ParametersSpec = Union[Dict[str, Any], Type[BaseModel]]
 
@@ -108,10 +108,9 @@ class ToolRegistry:
 
 
 # The module-level default instance preserves the existing import-time
-# registration flow (audit #8's "at minimum" state, upgraded from a bare
-# global dict to an instance whose state is at least encapsulated). The
-# bound-function aliases below keep every existing call site — `@register`,
-# `get_tools(...)`, `tool_names()` — working unchanged.
+# registration flow while keeping state encapsulated in a ToolRegistry
+# instance. The bound-function aliases below keep every existing call site
+# — `@register`, `get_tools(...)`, `tool_names()` — working unchanged.
 DEFAULT_REGISTRY = ToolRegistry()
 
 register = DEFAULT_REGISTRY.register
@@ -124,7 +123,7 @@ def tool_names() -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# example tools
+# built-in example tools
 # ---------------------------------------------------------------------------
 
 

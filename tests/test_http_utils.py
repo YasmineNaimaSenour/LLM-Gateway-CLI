@@ -1,4 +1,4 @@
-"""Tests for the shared HTTP retry helper (audit #4).
+"""Tests for the shared HTTP retry helper.
 
 The contract under test: retry connection errors and 500/502/503/504 with
 exponential backoff; never retry 429, other 4xx, non-conventional 5xx, or

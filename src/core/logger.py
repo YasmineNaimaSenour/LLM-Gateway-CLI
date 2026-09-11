@@ -5,8 +5,8 @@ the log file, matching the schema required by the project spec:
 
     timestamp, provider, latency_ms, tokens_in, tokens_out,
     temperature, status, error_type, tool_calls, tool_iterations,
-    plus additive fields added since the project spec (documented inline
-    below): error_subtype and token_count_method (audit #3 / #13).
+    plus additive fields added since the original spec (documented inline
+    below): error_subtype and token_count_method.
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ def log_request(
     == "error" (GatewayError subclasses know who they are), else None.
     `token_count_method` should be "tiktoken" or "heuristic" — how `tokens_in`
     was counted when client-side (provider-billed counts make it None), so
-    cost/context analysis can tell precise counts from approximations (audit
-    #13). Optional for backward compatibility with existing callers/tests.
+    cost/context analysis can tell precise counts from approximations.
+    Optional for backward compatibility with existing callers/tests.
     """
 
     record = {

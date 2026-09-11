@@ -9,7 +9,7 @@ budget-tracking purposes. Falls back to a word-count heuristic so the
 gateway keeps working in fully offline / dependency-light environments.
 
 `count_method()` reports which counting method is active ("tiktoken" or
-"heuristic"), so callers can record it in the request log (audit #13) and
+"heuristic"), so callers can record it in the request log and
 cost/context analysis can tell precise counts from approximations.
 """
 
@@ -27,7 +27,7 @@ except Exception:  # pragma: no cover - exercised only when tiktoken is absent
 
 _PER_MESSAGE_OVERHEAD = 4  # rough allowance for role/formatting tokens per chat message
 
-# Values of the `token_count_method` log field (audit #13).
+# Values of the `token_count_method` log field.
 METHOD_TIKTOKEN = "tiktoken"
 METHOD_HEURISTIC = "heuristic"
 

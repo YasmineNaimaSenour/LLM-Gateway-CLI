@@ -8,7 +8,7 @@ to be able to tell them apart
 2. It IS valid JSON Schema, but it uses a feature outside the subset this
    gateway currently knows how to turn into a Pydantic model -> raises UnsupportedSchemaError
 
-The root schema must be `"type": "object"` , structured extraction produces
+The root schema must be `"type": "object"` — structured extraction produces
 one JSON object per call.
 """
 
@@ -89,7 +89,7 @@ def validate_json_schema_document(schema: Dict[str, Any]) -> None:
 
 
 def check_supported_subset(schema: Any, *, path: str = "$") -> None:
-    """Walk `schema` and raise UnsupportedSchemaError for anything outside our subset.    """
+    """Walk `schema` and raise UnsupportedSchemaError for anything outside our subset."""
     if not isinstance(schema, dict):
         # JSON Schema permits `true`/`false` as a whole schema; we don't support that.
         raise UnsupportedSchemaError(f"{path}: boolean JSON Schemas (`true`/`false`) are not supported.")
@@ -151,7 +151,7 @@ def _reject_unsupported_keywords(schema: Dict[str, Any], path: str) -> None:
 def _check_description(schema: Dict[str, Any], path: str) -> None:
     """`description`, when present, must be a string — at every schema level.
 
-    Notes on why this lives in the subset checker and not just meta-validation:
+    Why this lives in the subset checker and not just meta-validation:
     the JSON Schema 2020-12 meta-schema does reject a non-string
     `description`, so `load_and_validate_schema()` would catch it anyway —
     but as a SchemaError with a cryptic metaschema message, and only when the

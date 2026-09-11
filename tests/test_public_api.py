@@ -1,4 +1,4 @@
-"""Guard tests for the declared public API surface (audit #20).
+"""Guard tests for the declared public API surface.
 
 A stale `__all__` entry is worse than none: it *claims* an export exists.
 Every name declared by any package's `__all__` must resolve as an attribute

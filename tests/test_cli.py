@@ -53,7 +53,7 @@ def test_cli_explicit_chat_subcommand_matches_backward_compatible_flat_form(
 def test_cli_flat_form_still_works_but_prints_a_deprecation_warning(
     mock_build_provider, mock_log_request, capsys
 ):
-    # audit #7: the implicit 'chat' form still functions, but every use
+    # The implicit 'chat' form still functions, but every use
     # prints a stderr warning so scripts get a visible migration signal.
     mock_provider = mock_build_provider.return_value
     mock_provider.chat.return_value = ChatResponse(text="hello back", tokens_out=5)
@@ -80,7 +80,7 @@ def test_cli_explicit_chat_form_prints_no_deprecation_warning(
     assert "deprecated" not in capsys.readouterr().err
 
 
-# -- provider-reported prompt tokens in the log (audit #11) -----------------
+# -- provider-reported prompt tokens in the log -----------------------------
 
 
 @patch("src.cli.log_request")
@@ -110,7 +110,7 @@ def test_cli_falls_back_to_client_side_tokens_in_when_provider_reports_none(
     assert isinstance(logged, int) and logged > 0  # the pre-count, not None
 
 
-# -- how the logged tokens_in was counted (audit #13) -----------------------
+# -- how the logged tokens_in was counted -----------------------------------
 
 
 @patch("src.cli.log_request")
@@ -282,7 +282,7 @@ def test_cli_chat_with_tools_executes_calculator_and_returns_final_answer(mock_b
 def test_cli_chat_with_tools_shows_loop_progress_on_stderr(
     mock_build_provider, mock_log_request, capsys
 ):
-    # audit #15: tool-bearing turns can't stream, but the user shouldn't stare
+    # Tool-bearing turns can't stream, but the user shouldn't stare
     # at silence either — each provider round-trip and tool execution is
     # announced on stderr while stdout stays reserved for the final answer.
     mock_provider = mock_build_provider.return_value
@@ -342,7 +342,7 @@ def test_cli_tool_loop_error_logs_its_own_error_subtype(mock_build_provider, moc
 def test_cli_stderr_and_log_record_name_the_same_error_class(
     mock_build_provider, mock_log_request, capsys
 ):
-    # Audit #21, pinned: stderr carries `[category:ClassName]` and the JSONL
+    # Pinned convention: stderr carries `[category:ClassName]` and the JSONL
     # record carries the same class in error_subtype. Both surfaces must say
     # the same thing at the same specificity — that agreement IS the
     # standardized convention, and it holds for every GatewayError because
@@ -364,7 +364,7 @@ def test_cli_stderr_and_log_record_name_the_same_error_class(
     assert exit_code == 1
     kwargs = mock_log_request.call_args.kwargs
     stderr = capsys.readouterr().err
-    # stderr also carries tool-loop progress lines (#15); find the error line.
+    # stderr also carries tool-loop progress lines; find the error line.
     error_line = next(line for line in stderr.splitlines() if line.startswith("["))
     assert error_line.startswith(f"[{kwargs['error_type']}:{kwargs['error_subtype']}]")
     assert kwargs["error_subtype"] == "ToolLoopError"

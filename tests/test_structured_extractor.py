@@ -136,13 +136,14 @@ def test_schema_instruction_message_is_a_system_message_mentioning_the_schema():
     assert '"age"' in message.content
 
 
-# -- balanced-brace JSON extraction (audit #9) -----------------------------
+# -- balanced-brace JSON extraction -----------------------------------------
 
 
 def test_extract_json_picks_the_first_object_not_first_brace_to_last_brace():
-    # The audit's exact failure mode: the old text.find("{")/text.rfind("}")
-    # slice would have produced `{...} and also {...}` — invalid JSON — and
-    # the extraction would have failed despite a perfectly good first object.
+    # The naive text.find("{")/text.rfind("}") slice would have produced
+    # `{...} and also {...}` — invalid JSON — and the extraction would have
+    # failed despite a perfectly good first object. Brace-depth counting is
+    # what makes this case pass.
     provider = _mock_provider('The data is {"name": "Bob", "age": 30} and also {"note": "ignore me"}')
     result = extract(provider, "text", SCHEMA, max_retries=0)
     assert result.data == {"name": "Bob", "age": 30}
@@ -179,7 +180,7 @@ def test_extract_json_returns_none_for_unclosed_object():
     assert _extract_json_value('no braces at all') is None
 
 
-# -- corrective retry messages restate the schema requirements (audit #10) --
+# -- corrective retry messages restate the schema requirements --------------
 
 
 def test_retry_message_carries_a_concise_schema_summary():
@@ -209,7 +210,7 @@ def test_retry_message_summarizes_enums_and_nested_structures():
     assert '$.tags items: string' in summary
 
 
-# -- provider-reported prompt tokens (audit #11) ----------------------------
+# -- provider-reported prompt tokens ----------------------------------------
 
 
 def test_extract_carries_provider_reported_tokens_in():

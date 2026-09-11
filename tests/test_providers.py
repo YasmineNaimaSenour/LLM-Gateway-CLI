@@ -18,14 +18,14 @@ def _msg():
 _TOOL = ToolSpec(name="calculator", description="add numbers", parameters={"type": "object", "properties": {}})
 
 
-# -- ChatMessage content-only serialization (audit #22) -----------------------
+# -- ChatMessage content-only serialization -----------------------------------
 
 
 def test_to_content_dict_carries_role_and_content_only():
-    # The name is the contract (renamed from to_dict, audit #22): the
-    # tool-calling fields — tool_calls, tool_call_id, name — are deliberately
-    # NOT included. Token counting is the intended consumer; full-fidelity
-    # serialization has its own explicit record format (src/core/session.py).
+    # The name is the contract: the tool-calling fields — tool_calls,
+    # tool_call_id, name — are deliberately NOT included. Token counting is
+    # the intended consumer; full-fidelity serialization has its own explicit
+    # record format (src/core/session.py).
     message = ChatMessage(
         role="assistant",
         content="calling it",
@@ -56,7 +56,7 @@ def test_ollama_chat_success(mock_post):
     response = provider.chat(_msg())
     assert response.text == "hi there"
     assert response.tokens_out > 0
-    assert response.tokens_in == 12  # provider-billed prompt count (audit #11)
+    assert response.tokens_in == 12  # provider-billed prompt count
 
 
 @patch("src.providers.ollama_provider.requests.post")
@@ -166,7 +166,7 @@ def test_groq_chat_success(mock_post, monkeypatch):
     response = provider.chat(_msg())
     assert response.text == "hi"
     assert response.tokens_out == 3
-    assert response.tokens_in == 11  # provider-billed prompt count (audit #11)
+    assert response.tokens_in == 11  # provider-billed prompt count
 
 
 @patch("src.providers.groq_provider.requests.post")
@@ -262,11 +262,11 @@ def test_groq_forwards_response_schema_as_json_object_mode(mock_post, monkeypatc
     assert sent_payload["response_format"] == {"type": "json_object"}
 
 
-# -- interactive timeout + endpoint configurability (audit #23 / #24) ---------
+# -- interactive timeout + endpoint configurability ---------------------------
 
 
 def test_ollama_default_timeout_is_interactive_friendly():
-    # Audit #23: 120s was a batch-appropriate default that left an interactive
+    # 120s was a batch-appropriate default that left an interactive
     # user staring at a stuck server for two minutes. The default is now 60s;
     # OLLAMA_TIMEOUT is the documented override for batch/slow-hardware use.
     assert OllamaProvider().timeout == 60.0
@@ -299,7 +299,7 @@ def test_groq_default_timeout_and_env_override(monkeypatch):
 
 @patch("src.providers.groq_provider.requests.post")
 def test_groq_posts_to_the_configured_endpoint(mock_post, monkeypatch):
-    # Audit #24: api_url argument > GROQ_API_URL env > official endpoint.
+    # Precedence: api_url argument > GROQ_API_URL env > official endpoint.
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     monkeypatch.delenv("GROQ_API_URL", raising=False)
     mock_resp = MagicMock(status_code=200)

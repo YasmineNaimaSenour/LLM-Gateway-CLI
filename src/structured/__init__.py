@@ -1,6 +1,6 @@
 """Generic structured-output extraction: text + JSON Schema -> validated dict.
 
-Pipeline (see ARCHITECTURE notes in each module):
+Pipeline (see each module's docstring for its stage of the pipeline):
 
     input text + JSON Schema file
         -> schema.load_and_validate_schema()   (meta-validate + subset check)

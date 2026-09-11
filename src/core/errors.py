@@ -14,7 +14,8 @@ from enum import Enum
 from typing import Optional, Tuple, Type
 
 
-class ErrorType(str, Enum): # we use string enums to enable string properties and serialization for the logs
+# String enum so values serialize directly into the JSONL log.
+class ErrorType(str, Enum):
     RATE_LIMIT = "rate_limit"
     CONTEXT_OVERFLOW = "context"
     FORMAT_ERROR = "format"
@@ -145,7 +146,7 @@ _FORMAT_MARKERS: Tuple[str, ...] = (
 def classify_exception(exc: BaseException, *, status_code: Optional[int] = None) -> ErrorType:
     """Map a raw exception (and optional HTTP status) onto the shared taxonomy."""
 
-    if isinstance(exc, GatewayError): # No need to classify it again. this makes the function idempotent
+    if isinstance(exc, GatewayError):  # already classified; makes this function idempotent
         return exc.error_type
 
     message = str(exc).lower()

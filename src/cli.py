@@ -17,7 +17,7 @@ Usage:
     python -m src.cli chat --provider ollama --session chats/demo.jsonl --prompt "Hi, I'm Bob."
     python -m src.cli chat --provider ollama --session chats/demo.jsonl --prompt "What's my name?"
 
-    # M2: structured output and/or tool calling during chat
+    # structured output and/or tool calling during chat
     python -m src.cli chat --provider groq --prompt "Summarize this release" \
         --schema examples/structured/release_notes_schema.json
     python -m src.cli chat --provider ollama --prompt "42 * 17? Also, time in Tokyo?" \
@@ -172,8 +172,8 @@ def _normalize_argv(argv: List[str]) -> List[str]:
     """Backward compatibility: allow omitting the 'chat' subcommand entirely.
 
     `--provider ollama --prompt hi` (the pre-subcommand CLI shape) is treated
-    as `chat --provider ollama --prompt hi`. The implicit form is deprecated
-    (audit #7): it still works, but each use prints a one-line stderr warning
+    as `chat --provider ollama --prompt hi`. The implicit form is deprecated:
+    it still works, but each use prints a one-line stderr warning
     so scripts have a visible signal to migrate before it is removed.
     """
     if not argv:
@@ -193,7 +193,7 @@ def build_provider(provider_name: str, model: Optional[str], timeout: Optional[f
 
     A thin adapter over the provider registry (src/providers/registry.py):
     lookup, per-provider model defaulting, and instantiation all live there.
-    `timeout` (--timeout, audit #23) is forwarded; providers without a
+    `timeout` (--timeout) is forwarded; providers without a
     timeout knob ignore it via the registry's signature check. Kept as a
     named function because it's the CLI's single seam for provider
     construction — tests patch this, and stderr/log handling keys off the
@@ -308,7 +308,7 @@ def _main_chat(args: argparse.Namespace) -> int:
                 )
             # Tool-bearing turns never stream (see providers/base.py), but they
             # can be slow — the model thinks, calls tools, thinks again. Rather
-            # than silence (audit #15's complaint), report loop progress on
+            # than silence, report loop progress on
             # stderr: each provider round-trip and each tool execution. Only
             # --tools creates the loop, so the observer is only wired then; the
             # schema-only path has a single provider call to wait on.
@@ -338,7 +338,7 @@ def _main_chat(args: argparse.Namespace) -> int:
                 on_tool_loop_event=on_tool_loop_event,
             )
             tokens_out = result.tokens_out
-            provider_tokens_in = result.tokens_in  # provider-billed prompt count (audit #11), if reported
+            provider_tokens_in = result.tokens_in  # provider-billed prompt count, if reported
             tool_call_count = result.tool_call_count
             tool_iterations = result.tool_iterations
             transcript = result.messages
@@ -369,11 +369,11 @@ def _main_chat(args: argparse.Namespace) -> int:
 
     timer.stop()
     # Prefer the provider's own billed prompt-token count when it reports one
-    # (audit #11) — more accurate than the tiktoken/heuristic pre-count,
+    # — more accurate than the tiktoken/heuristic pre-count,
     # especially for non-OpenAI tokenizers. The client-side pre-count stays
     # as the fallback (and remains the pre-request context-window signal).
     logged_tokens_in = provider_tokens_in if provider_tokens_in is not None else tokens_in
-    # token_count_method (audit #13) records HOW tokens_in was counted so log
+    # token_count_method records HOW tokens_in was counted so log
     # analysis can tell precise provider-billed counts (None here — the count
     # came from the provider, not from this client) from tiktoken vs. the
     # heuristic fallback.
@@ -430,10 +430,10 @@ def _main_structured(args: argparse.Namespace) -> int:
     else:
         print(output_json)
 
-    # Same audit-#11 preference as chat: provider-billed prompt tokens when
+    # Same preference as chat: provider-billed prompt tokens when
     # reported, client-side pre-count otherwise.
     logged_tokens_in = provider_tokens_in if provider_tokens_in is not None else tokens_in
-    # token_count_method (audit #13) records HOW tokens_in was counted so log
+    # token_count_method records HOW tokens_in was counted so log
     # analysis can tell precise provider-billed counts (None here — the count
     # came from the provider, not from this client) from tiktoken vs. the
     # heuristic fallback.

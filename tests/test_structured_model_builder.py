@@ -155,10 +155,10 @@ def test_property_names_needing_sanitization_round_trip_via_alias():
 
 
 def test_sanitized_field_names_use_pythonic_names_internally_and_aliases_on_the_wire():
-    # audit #16, part 1: the alias mechanism has TWO sides, and the original
-    # test only checked one. Internally the field is the sanitized Python
-    # name (model_dump without by_alias); on the wire it's the original
-    # schema property name (by_alias=True) so output JSON matches the schema.
+    # The alias mechanism has TWO sides. Internally the field is the
+    # sanitized Python name (model_dump without by_alias); on the wire it's
+    # the original schema property name (by_alias=True) so output JSON
+    # matches the schema.
     schema = {
         "type": "object",
         "properties": {"zip-code": {"type": "string"}, "class": {"type": "string"}, "2fa": {"type": "boolean"}},
@@ -175,7 +175,7 @@ def test_sanitized_field_names_use_pythonic_names_internally_and_aliases_on_the_
 
 
 def test_model_validate_accepts_both_original_and_sanitized_keys():
-    # audit #16, part 2: populate_by_name=True means callers may feed the
+    # populate_by_name=True means callers may feed the
     # model EITHER the schema's property names (the wire path — what the
     # extractor does) or the sanitized Python field names. Both must work,
     # and must produce the same instance.

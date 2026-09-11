@@ -13,8 +13,7 @@ While the loop runs, `on_tool_loop_event` delivers a structured
 `ToolLoopEvent` at each meaningful point (a provider round-trip starting,
 a tool call being executed, the loop finishing). This keeps tool-bearing
 turns observable for interfaces — the CLI prints progress to stderr —
-without the provider-side complexity of streaming tool-call payloads
-(audit #15).
+without the provider-side complexity of streaming tool-call payloads.
 """
 
 from __future__ import annotations
@@ -53,23 +52,21 @@ class OrchestrationResult:
 # (waiting on the model / running a tool / producing the answer) and WHICH
 # tool, not a full dump of the conversation — callers can read the final
 # transcript from OrchestrationResult.messages when the turn completes.
+#
+# Callback protocol: receives (event, detail) pairs —
+#   ("thinking", iteration number as str)  — provider round-trip starting
+#   ("tool",     tool name)                — a tool call is being executed
+#   ("done",     None)                     — loop finished with an answer
 ToolLoopEvent = Tuple[str, Optional[str]]
 
 
-@dataclass
+# Type alias documenting the callback protocol described above. Declared as
+# a plain class so type checkers treat it as a nominal (non-alias) type.
 class ToolLoopObserver:
-    """Callback protocol for observing a tool loop while it runs (audit #15).
+    """Callback protocol for observing a tool loop while it runs.
 
-    Receives `(event, detail)` pairs:
-
-      ("thinking", iteration number as str)  — provider call starting
-      ("tool",     tool name)                — a tool call is being executed
-      ("done",     None)                     — loop finished with an answer
-
-    Deliberately minimal: what matters for a progress UI is WHERE the turn
-    is (waiting on the model / running a tool / producing the answer) and
-    WHICH tool — not a dump of the conversation. The full transcript is
-    available from OrchestrationResult.messages once the turn completes.
+    See `ToolLoopEvent` for the (event, detail) pairs delivered and the
+    rationale for keeping the protocol minimal.
     """
 
 

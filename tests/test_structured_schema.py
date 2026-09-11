@@ -116,7 +116,7 @@ def test_empty_enum_is_unsupported():
         check_supported_subset(schema)
 
 
-# -- description must be a string at every level (audit #6) ----------------
+# -- description must be a string at every level ---------------------------
 
 
 @pytest.mark.parametrize(

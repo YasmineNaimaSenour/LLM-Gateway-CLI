@@ -4,11 +4,11 @@ This subpackage owns the gateway's shared contracts:
 
 - errors      — the GatewayError hierarchy and the 5-category ErrorType
                 taxonomy every failure is classified into (the primary
-                debugging signal; audit #3)
+                debugging signal)
 - logger      — the JSONL request log written for every call
 - orchestrator— run_turn(): the tool-call loop and schema coercion that
                 both CLI commands are thin wrappers over
-- session     — multi-turn persistence behind `chat --session` (audit #2)
+- session     — multi-turn persistence behind `chat --session`
 - telemetry   — latency timing helpers
 - types       — wire-facing dataclasses shared with providers/tools
 """

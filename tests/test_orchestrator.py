@@ -132,7 +132,7 @@ def test_run_turn_schema_only_delegates_to_coerce_to_schema():
     assert provider.chat.call_count == 2
 
 
-# -- provider-reported prompt tokens (audit #11) ----------------------------
+# -- provider-reported prompt tokens ----------------------------------------
 
 
 def test_run_turn_passes_provider_reported_tokens_in_through():
@@ -195,7 +195,7 @@ def test_run_turn_combines_tools_and_schema_without_a_redundant_final_call():
     assert result.tokens_out == 11
 
 
-# -- tool-loop progress events (audit #15) ----------------------------------
+# -- tool-loop progress events ----------------------------------------------
 
 
 def test_run_turn_emits_progress_events_during_the_tool_loop():

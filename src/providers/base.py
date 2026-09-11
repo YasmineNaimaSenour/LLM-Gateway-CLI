@@ -25,7 +25,7 @@ class ChatMessage:
     wire format identifies tool results by name rather than by id).
     """
 
-    role: Literal["system", "user", "assistant", "tool"]  # "system" | "user" | "assistant" | "tool"
+    role: Literal["system", "user", "assistant", "tool"]
     content: Optional[str] = None
     tool_calls: Optional[List[ToolCall]] = None
     tool_call_id: Optional[str] = None
@@ -34,7 +34,7 @@ class ChatMessage:
     def to_content_dict(self) -> dict:
         """Serialize the message's role and text content only.
 
-        Deliberately named for what it does (audit #22): the tool-calling
+        Deliberately named for what it does: the tool-calling
         fields — `tool_calls`, `tool_call_id`, `name` — are NOT included.
         Token counting is the intended consumer (content is all that
         matters there). For full-fidelity serialization (sessions,
@@ -48,8 +48,8 @@ class ChatMessage:
 class ChatResponse:
     """Final, fully-assembled response for one non-streaming call.
 
-    `tokens_in` is the provider's own count of the prompt tokens it billed
-    (audit #11), or None when the provider doesn't report usage — callers
+    `tokens_in` is the provider's own count of the prompt tokens it billed,
+    or None when the provider doesn't report usage — callers
     then fall back to client-side counting. `tokens_out` keeps the same
     fallback behavior locally, since it has always been required.
     """

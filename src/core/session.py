@@ -1,9 +1,8 @@
 """Session persistence: continue a conversation across CLI invocations.
 
-This is the "multi-turn / session concept" the CLI was missing (AUDIT.md
-#2). The orchestrator already returns the complete transcript for a turn
-(`OrchestrationResult.messages`, AUDIT.md #1/#19) — a session is simply
-that transcript, loaded from and appended to a JSONL file:
+The orchestrator already returns the complete transcript for a turn
+(`OrchestrationResult.messages`) — a session is simply that transcript,
+loaded from and appended to a JSONL file:
 
     {"role": ..., "content": ..., "tool_calls": [...], "tool_call_id": ..., "name": ...}
 
@@ -44,7 +43,7 @@ VALID_ROLES = ("system", "user", "assistant", "tool")
 def _message_to_record(message: ChatMessage) -> Dict[str, Any]:
     """Full-fidelity ChatMessage -> JSON-serializable dict.
 
-    (ChatMessage.to_content_dict() is deliberately content-only — audit #22 —
+    (ChatMessage.to_content_dict() is deliberately content-only,
     so sessions serialize explicitly rather than relying on it.)
     """
     record: Dict[str, Any] = {"role": message.role, "content": message.content}

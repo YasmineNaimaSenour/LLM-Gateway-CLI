@@ -1,4 +1,4 @@
-"""Guard tests for examples/structured/ (audit #17).
+"""Guard tests for examples/structured/.
 
 Examples rot silently: a schema that stops validating, or an input file that
 disappears, breaks the very first thing a new user tries — with nobody
@@ -60,7 +60,7 @@ def test_example_schema_passes_subset_check_and_model_building(stem):
 
 
 def test_examples_collectively_demonstrate_the_supported_subset():
-    # The audit's point: examples are the showcase of the feature matrix.
+    # Examples are the showcase of the feature matrix.
     # If someone adds a subset feature, they should also be able to see it
     # demonstrated in examples; these are the features worth demonstrating.
     features = set()

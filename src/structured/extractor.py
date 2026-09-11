@@ -55,13 +55,13 @@ Validation error:
 
 Reply again with ONLY a corrected JSON object matching the schema. No prose, no code fences."""
 
-_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE) 
+_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
 def _json_object_summary(schema: dict, path: str = "$") -> str:
     """A compact, model-readable one-line-per-field summary of an object schema.
 
-    Used in corrective retry messages (audit #10): by the time a retry
+    Used in corrective retry messages: by the time a retry
     happens, the full schema from the original system prompt may have
     scrolled out of the model's effective attention window, so each retry
     re-states just what the final object must contain — required fields,
@@ -101,7 +101,7 @@ class ExtractionResult:
     attempts: int
     raw_text: str
     # Provider-reported prompt tokens for the call that produced the accepted
-    # answer (audit #11); None when the provider doesn't report usage, in
+    # answer; None when the provider doesn't report usage, in
     # which case callers fall back to client-side counting.
     tokens_in: Optional[int] = None
 
@@ -152,8 +152,8 @@ def coerce_to_schema(
     model = build_model(schema, model_name=model_name)
     # Built once: every corrective retry message carries a concise reminder
     # of WHAT to produce (required fields, types, enum values), so the retry
-    # prompt stands on its own even when early context (audit #10) has
-    # pushed the full schema out of the model's effective attention window.
+    # prompt stands on its own even when early context has pushed the full
+    # schema out of the model's effective attention window.
     schema_summary = _json_object_summary(schema)
 
     last_error: Optional[str] = None
@@ -171,7 +171,7 @@ def coerce_to_schema(
                 list(messages), temperature=temperature, max_tokens=max_tokens, response_schema=schema
             )
         last_raw = response.text
-        last_tokens_in = response.tokens_in  # provider-billed prompt count (audit #11), if reported
+        last_tokens_in = response.tokens_in  # provider-billed prompt count, if reported
 
         parsed = _extract_json_value(response.text)
         if parsed is None:
@@ -223,7 +223,7 @@ def extract(
     """Extract structured data from a fixed block of text (the `structured`
     CLI command). Thin wrapper: builds the extraction-specific system/user
     messages and delegates to `coerce_to_schema()`. The provider-billed
-    `tokens_in` (audit #11) rides on the returned ExtractionResult — the
+    `tokens_in` rides on the returned ExtractionResult — the
     provider's count already covers the messages built here.
     """
     schema_json = json.dumps(schema, indent=2)
@@ -240,11 +240,10 @@ def _extract_json_value(text: str) -> Any:
     """Best-effort extraction of a JSON value from a raw model response.
 
     Tries, in order: the whole response as-is, a ```json ... ``` fenced
-    block, then the first balanced {...} span found by brace-depth counting
-    (audit #9). The depth counter handles nested objects correctly and is
+    block, then the first balanced {...} span found by brace-depth counting.
+    The depth counter handles nested objects correctly and is
     immune to braces inside string literals or prose sitting between two
-    separate JSON objects — failure modes of the old first-{-to-last-}
-    slice. Returns None if nothing parses.
+    separate JSON objects. Returns None if nothing parses.
     """
     text = text.strip()
     if not text:
@@ -274,7 +273,7 @@ def _extract_json_value(text: str) -> Any:
 def _find_balanced_json_objects(text: str) -> Iterator[str]:
     """Yield each balanced `{...}` span in `text`, in order.
 
-    Walks the text counting brace depth (audit #9): a span is yielded where
+    Walks the text counting brace depth: a span is yielded where
     the depth first returns to 0, then scanning continues after it — so a
     non-JSON balanced span in prose (e.g. `{curly}`) is skipped rather than
     aborting the search, and prose braces between two JSON objects cannot
