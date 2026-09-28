@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import StreamingResponse
 
 from ..cli import build_messages  # D1: reuse the CLI's pure choreography helper
 from ..core.errors import FormatError
@@ -40,7 +41,7 @@ from ..core.orchestrator import run_turn
 from ..core.session import load_session_messages, save_session_messages
 from ..core.telemetry import Timer
 from ..core.types import ToolSpec
-from ..providers import BaseProvider, get_provider_spec, provider_names
+from ..providers import BaseProvider, ChatMessage, get_provider_spec, provider_names
 from ..structured.extractor import extract as run_extraction
 from ..token_utils import count_message_tokens, count_method, count_tokens
 from ..tools.executor import ToolExecutor
@@ -52,7 +53,14 @@ from .mappers import (
     messages_in_to_chat_messages,
     orchestration_result_to_chat_response,
 )
-from .schemas import ChatRequest, ChatResponse, StructuredRequest, StructuredResponse
+from .schemas import (
+    ChatRequest,
+    ChatResponse,
+    ChatStreamRequest,
+    StructuredRequest,
+    StructuredResponse,
+)
+from .streaming import done_sentinel, sse_chat_stream
 
 
 def create_app(
@@ -116,6 +124,24 @@ def create_app(
     def _resolve_structured_provider(body: StructuredRequest) -> BaseProvider:
         return deps.resolve_provider(body.provider, body.model, timeout=body.timeout)
 
+    def _assemble_chat_messages(
+        body: ChatRequest, *, schema: Optional[dict], session_path: Optional[str]
+    ) -> List[ChatMessage]:
+        """Message assembly — the CLI's exact choreography (D1), shared by
+        /v1/chat and /v1/chat/stream. A session continuation loads prior
+        history and does NOT re-inject system/schema: the saved transcript
+        already carries them."""
+        prior_messages = load_session_messages(session_path) if session_path else None
+        if body.messages is not None:
+            turn_input = messages_in_to_chat_messages(body.messages)
+        else:
+            turn_input = build_messages(
+                None if prior_messages is not None else body.system,
+                body.prompt,  # type: ignore[arg-type]  # validator guarantees one form
+                schema=schema if prior_messages is None else None,
+            )
+        return list(prior_messages or []) + turn_input
+
     # ------------------------------------------------------------------
     # Routes
     # ------------------------------------------------------------------
@@ -173,19 +199,7 @@ def create_app(
         tool_specs, tool_executor = tool_bundle
         timer = Timer().start()
 
-        # Message assembly — the CLI's exact choreography (D1). A session
-        # continuation loads prior history and does NOT re-inject
-        # system/schema: the saved transcript already carries them.
-        prior_messages = load_session_messages(session_path) if session_path else None
-        if body.messages is not None:
-            turn_input = messages_in_to_chat_messages(body.messages)
-        else:
-            turn_input = build_messages(
-                None if prior_messages is not None else body.system,
-                body.prompt,  # type: ignore[arg-type]  # validator guarantees one form
-                schema=schema if prior_messages is None else None,
-            )
-        messages = list(prior_messages or []) + turn_input
+        messages = _assemble_chat_messages(body, schema=schema, session_path=session_path)
 
         # Client-side pre-count — identical to the CLI: the pre-request
         # context signal and the tokens_in fallback when the provider
@@ -242,6 +256,44 @@ def create_app(
             **_log_kwargs(),
         )
         return response
+
+    @app.post("/v1/chat/stream")
+    def chat_stream(
+        body: ChatStreamRequest,
+        session_path: Optional[str] = Depends(_resolve_chat_session),
+        provider: BaseProvider = Depends(_resolve_chat_provider),
+    ) -> StreamingResponse:
+        """SSE streaming chat — plain chat only (D8).
+
+        Tools/schema never reach this route: `ChatStreamRequest` pins the
+        inherited D8 validator, so those requests are 422 at body
+        validation, before the response starts. All other request-shaped
+        failures (session/provider deps) raise here too — normal statuses,
+        no SSE headers sent. Once the stream starts, every provider error
+        becomes an in-band error event (streaming.py).
+        """
+        timer = Timer().start()
+        messages = _assemble_chat_messages(body, schema=None, session_path=session_path)
+        pre_count_tokens_in = count_message_tokens([m.to_content_dict() for m in messages])
+
+        headers = {
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # nginx: don't buffer the event stream
+        }
+        return StreamingResponse(
+            sse_chat_stream(
+                provider,
+                messages,
+                temperature=body.temperature,
+                max_tokens=body.max_tokens,
+                pre_count_tokens_in=pre_count_tokens_in,
+                timer=timer,
+                session_path=session_path,
+                log_path=log_path,
+            ),
+            media_type="text/event-stream",
+            headers=headers,
+        )
 
     @app.post("/v1/structured", response_model=StructuredResponse)
     def structured(

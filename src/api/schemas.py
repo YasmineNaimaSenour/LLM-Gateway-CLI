@@ -120,6 +120,20 @@ class ChatRequest(BaseModel):
         return self
 
 
+class ChatStreamRequest(ChatRequest):
+    """Body of POST /v1/chat/stream: plain chat only (D8).
+
+    Subclass, not duplication: identical fields and defaults, with `stream`
+    pinned to True. That pin makes the inherited D8 cross-field validator
+    reject `tools`/`schema` unconditionally on this endpoint — the 422 fires
+    at body validation, before the response (and its SSE headers) starts.
+    The stream flag itself is not repeated in client bodies; it is what this
+    endpoint *is*.
+    """
+
+    stream: Literal[True] = True  # pinned: the endpoint is the stream request
+
+
 class StructuredRequest(BaseModel):
     """Body of POST /v1/structured: text + inline schema → validated JSON.
 
