@@ -5,6 +5,7 @@ logs/*.jsonl
 .pytest_cache/
 *.egg-info/
 trash/
+API_LAYER_PLAN.md
 
 .venv/
 
