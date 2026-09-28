@@ -15,9 +15,9 @@ from fastapi.testclient import TestClient
 
 from src.api import app as app_module
 from src.api.app import create_app
-from src.core.errors import ExtractionError, FormatError
+from src.core.errors import ExtractionError
 from src.core.types import ToolCall
-from src.providers.base import BaseProvider, ChatMessage, ChatResponse as ProviderChatResponse
+from src.providers.base import BaseProvider, ChatResponse as ProviderChatResponse
 from src.providers.registry import DEFAULT_REGISTRY as PROVIDER_REGISTRY, ProviderSpec
 from src.tools.registry import DEFAULT_REGISTRY as TOOL_REGISTRY
 

@@ -67,6 +67,7 @@ def sse_chat_stream(
     timer: Timer,
     session_path: Optional[str] = None,
     log_path=None,
+    warnings: Optional[List[str]] = None,
 ) -> Iterator[str]:
     """Yield SSE frames for one plain-chat streaming turn.
 
@@ -74,8 +75,10 @@ def sse_chat_stream(
     /v1/chat); `pre_count_tokens_in` is the route's client-side pre-count,
     made before the response started. `timer` starts in the route so the
     success/error record's latency covers the whole streamed turn.
+    `warnings` carries the route's continuation notes (Step 7's session
+    guard) — surfaced on the done event alongside any save warnings.
     """
-    warnings: List[str] = []
+    warnings = list(warnings or [])
     chunks: List[str] = []
 
     try:

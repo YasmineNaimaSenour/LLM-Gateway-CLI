@@ -35,7 +35,7 @@ from fastapi import Depends, FastAPI
 from fastapi.responses import StreamingResponse
 
 from ..cli import build_messages  # D1: reuse the CLI's pure choreography helper
-from ..core.errors import FormatError
+from ..core.errors import FormatError, SessionError
 from ..core.logger import log_request
 from ..core.orchestrator import run_turn
 from ..core.session import load_session_messages, save_session_messages
@@ -60,7 +60,7 @@ from .schemas import (
     StructuredRequest,
     StructuredResponse,
 )
-from .streaming import done_sentinel, sse_chat_stream
+from .streaming import sse_chat_stream
 
 
 def create_app(
@@ -124,14 +124,42 @@ def create_app(
     def _resolve_structured_provider(body: StructuredRequest) -> BaseProvider:
         return deps.resolve_provider(body.provider, body.model, timeout=body.timeout)
 
-    def _assemble_chat_messages(
+    def _load_session_and_assemble(
         body: ChatRequest, *, schema: Optional[dict], session_path: Optional[str]
-    ) -> List[ChatMessage]:
-        """Message assembly — the CLI's exact choreography (D1), shared by
-        /v1/chat and /v1/chat/stream. A session continuation loads prior
-        history and does NOT re-inject system/schema: the saved transcript
-        already carries them."""
-        prior_messages = load_session_messages(session_path) if session_path else None
+    ) -> Tuple[List[ChatMessage], List[str]]:
+        """Session load + guard + message assembly in one pass — the CLI's
+        exact choreography (D1), shared by /v1/chat and /v1/chat/stream.
+
+        Load errors (`SessionError`: the path exists but holds no valid
+        session records) are re-raised as request-shaped `FormatError`s so
+        the Step 3 handler turns them into a 400 *before any provider call*
+        — mirroring the CLI, where a corrupt session file is reported before
+        the turn runs.
+
+        A continuation (prior history exists) does NOT re-inject
+        system/schema: the saved transcript already carries them — and the
+        CLI's non-fatal stderr notes for those cases surface here as
+        entries in the response's `warnings` list (Step 7's decided
+        channel), HTTP still 200. A first turn (no file yet) notes nothing.
+        """
+        warnings: List[str] = []
+        prior_messages = None
+        if session_path:
+            try:
+                prior_messages = load_session_messages(session_path)  # None when absent
+            except SessionError as exc:
+                raise FormatError(f"Unusable session file {session_path}: {exc}") from exc
+            if prior_messages:
+                if body.system:
+                    warnings.append(
+                        "`system` is ignored when continuing an existing session; "
+                        "the session's saved system message takes precedence."
+                    )
+                if body.schema_ is not None:
+                    warnings.append(
+                        "`schema` is not re-injected when continuing an existing session; "
+                        "the session's saved schema instruction takes precedence."
+                    )
         if body.messages is not None:
             turn_input = messages_in_to_chat_messages(body.messages)
         else:
@@ -140,7 +168,7 @@ def create_app(
                 body.prompt,  # type: ignore[arg-type]  # validator guarantees one form
                 schema=schema if prior_messages is None else None,
             )
-        return list(prior_messages or []) + turn_input
+        return list(prior_messages or []) + turn_input, warnings
 
     # ------------------------------------------------------------------
     # Routes
@@ -199,7 +227,9 @@ def create_app(
         tool_specs, tool_executor = tool_bundle
         timer = Timer().start()
 
-        messages = _assemble_chat_messages(body, schema=schema, session_path=session_path)
+        # Step 7's session choreography: load errors → 400 pre-provider,
+        # continuation notes as response `warnings`.
+        messages, warnings = _load_session_and_assemble(body, schema=schema, session_path=session_path)
 
         # Client-side pre-count — identical to the CLI: the pre-request
         # context signal and the tokens_in fallback when the provider
@@ -220,9 +250,8 @@ def create_app(
 
         # Session save — after success only; a failed turn never persists
         # (contract #5). A save failure must not fail a completed turn, so
-        # it degrades to a warning on the response (the channel Step 7
-        # decided on, required as soon as saves exist).
-        warnings: List[str] = []
+        # it degrades to a warning on the response (Step 7's stderr
+        # analogue) appended to any continuation notes from the guard.
         if session_path:
             try:
                 save_session_messages(session_path, result.messages)
@@ -273,7 +302,9 @@ def create_app(
         becomes an in-band error event (streaming.py).
         """
         timer = Timer().start()
-        messages = _assemble_chat_messages(body, schema=None, session_path=session_path)
+        # Step 7's session choreography (same as /v1/chat: 400 on load
+        # errors, continuation notes in the done event's `warnings`).
+        messages, warnings = _load_session_and_assemble(body, schema=None, session_path=session_path)
         pre_count_tokens_in = count_message_tokens([m.to_content_dict() for m in messages])
 
         headers = {
@@ -290,6 +321,7 @@ def create_app(
                 timer=timer,
                 session_path=session_path,
                 log_path=log_path,
+                warnings=warnings,
             ),
             media_type="text/event-stream",
             headers=headers,
