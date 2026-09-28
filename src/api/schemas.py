@@ -187,7 +187,12 @@ class UsageOut(BaseModel):
 
 class ChatResponse(BaseModel):
     """One completed chat turn: the final text, optional validated data,
-    the full transcript (continuation contract), and usage/tool stats."""
+    the full transcript (continuation contract), and usage/tool stats.
+
+    `warnings` carries non-fatal notes (Step 7's over-HTTP channel for
+    what the CLI prints to stderr, e.g. a session save that failed after
+    a successful turn); empty when nothing noteworthy happened.
+    """
 
     text: str
     data: Optional[Dict[str, Any]] = None  # validated JSON when schema was given
@@ -198,6 +203,7 @@ class ChatResponse(BaseModel):
     tool_iterations: int
     attempts: int
     usage: UsageOut
+    warnings: List[str] = Field(default_factory=list)
 
 
 class StructuredResponse(BaseModel):

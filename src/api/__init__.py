@@ -9,7 +9,11 @@ Note: this package exists for the HTTP API layer only. No module outside
 ``src/api/`` imports FastAPI/uvicorn, keeping the runtime's dependency
 footprint unchanged (API_LAYER_PLAN.md, D2).
 
-Step 0 (API_LAYER_PLAN.md §7): package created intentionally empty — this module
-exports nothing yet. ``create_app`` is introduced with ``src/api/app.py`` in
-Step 5; ``__all__`` will then declare it (D15).
+Public API (D15): ``create_app`` — the only object other modules should
+import. The routes, dependencies, mappers, and error handlers are the
+package's internals.
 """
+
+from .app import create_app
+
+__all__ = ["create_app"]

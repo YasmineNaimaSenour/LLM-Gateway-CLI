@@ -112,13 +112,15 @@ def orchestration_result_to_chat_response(
     provider: str,
     model: str,
     pre_count_tokens_in: Optional[int],
+    warnings: Optional[List[str]] = None,
 ) -> ChatResponse:
     """One completed turn → ChatResponse.
 
     `result.messages` is the full transcript (run_turn's continuation
     contract); it is serialized, never mutated. The model name reported is
     the provider's resolved model (`provider.model`), matching what the
-    provider actually used — not the raw request field.
+    provider actually used — not the raw request field. `warnings`
+    carries the handler's non-fatal notes (Step 7's stderr analogue).
     """
     return ChatResponse(
         text=result.text,
@@ -130,6 +132,7 @@ def orchestration_result_to_chat_response(
         tool_iterations=result.tool_iterations,
         attempts=result.attempts,
         usage=build_usage_out(result.tokens_in, pre_count_tokens_in, result.tokens_out),
+        warnings=warnings or [],
     )
 
 

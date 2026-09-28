@@ -8,12 +8,13 @@ of that package.
 import importlib
 
 import src
+import src.api
 import src.core
 import src.providers
 import src.structured
 import src.tools
 
-DECLARED_PACKAGES = [src, src.core, src.providers, src.structured, src.tools]
+DECLARED_PACKAGES = [src, src.api, src.core, src.providers, src.structured, src.tools]
 
 
 def test_every_declared_public_name_resolves_on_its_package():
