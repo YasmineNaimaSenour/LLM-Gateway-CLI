@@ -75,8 +75,8 @@ def sse_chat_stream(
     /v1/chat); `pre_count_tokens_in` is the route's client-side pre-count,
     made before the response started. `timer` starts in the route so the
     success/error record's latency covers the whole streamed turn.
-    `warnings` carries the route's continuation notes (Step 7's session
-    guard) — surfaced on the done event alongside any save warnings.
+    `warnings` carries the route's continuation notes (the session
+    guard's) — surfaced on the done event alongside any save warnings.
     """
     warnings = list(warnings or [])
     chunks: List[str] = []
@@ -110,7 +110,7 @@ def sse_chat_stream(
 
     # Session save — after success only (contract #5); a failed save must
     # not fail a completed stream, so it degrades to a warning on the done
-    # event (Step 7's stderr analogue).
+    # event (the stderr analogue).
     if session_path:
         try:
             save_session_messages(session_path, transcript)

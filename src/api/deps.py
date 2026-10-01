@@ -9,13 +9,13 @@ startup-vs-calltime distinction:
     request, never cached, so constructor side effects (e.g. Groq without
     GROQ_API_KEY → ModelError) happen at call time, inside error handling.
   - `resolve_tools`        — names → RegisteredTools + ToolExecutor (D13).
-  - `validate_schema`      — re-export of the Step 2 inline-schema helper.
+  - `validate_schema`      — re-export of mappers.validate_inline_schema.
   - `resolve_session_path` — session_root confinement (D9): the server's
     opt-in root is the only filesystem a request may touch.
 
 The module-level function forms take the registry/executor objects
 explicitly (pure functions, trivially unit-testable); the FastAPI
-`Depends` wrappers in app.py (Step 5) bind them to request parameters.
+`Depends` wrappers in app.py bind them to request parameters.
 No FastAPI imports here — deps.py stays framework-agnostic like the rest
 of the API layer's seams.
 """
@@ -57,7 +57,7 @@ def resolve_provider(
     `model=None` → the registry's per-provider default; `timeout` is
     forwarded registry-style (only accepted by providers with the knob).
     Unknown names raise the registry's own `FormatError` ("Available
-    providers: ...") — mapped to 400 by the Step 3 handler. Constructor
+    providers: ...") — mapped to 400 by the error handlers. Constructor
     errors (e.g. Groq without GROQ_API_KEY → ModelError) propagate
     unchanged: they are call-time model failures (→ 502), not request
     validation failures.
@@ -89,10 +89,10 @@ def resolve_tools(names: List[str]) -> Tuple[List[ToolSpec], ToolExecutor]:
 
 
 def validate_schema(schema) -> dict:
-    """Validate a request's inline schema (re-export of the Step 2 helper).
+    """Validate a request's inline schema (re-export of mappers.validate_inline_schema).
 
-    `SchemaError` → 424, `UnsupportedSchemaError` → 422 via the Step 3
-    handler; both fire before any provider call.
+    `SchemaError` → 424, `UnsupportedSchemaError` → 422 via the error
+    handlers; both fire before any provider call.
     """
     return validate_inline_schema(schema)
 

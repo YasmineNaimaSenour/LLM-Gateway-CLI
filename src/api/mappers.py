@@ -120,7 +120,7 @@ def orchestration_result_to_chat_response(
     contract); it is serialized, never mutated. The model name reported is
     the provider's resolved model (`provider.model`), matching what the
     provider actually used — not the raw request field. `warnings`
-    carries the handler's non-fatal notes (Step 7's stderr analogue).
+    carries the handler's non-fatal notes (the stderr analogue).
     """
     return ChatResponse(
         text=result.text,

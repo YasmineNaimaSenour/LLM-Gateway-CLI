@@ -1,8 +1,8 @@
-# LLM Gateway CLI
+# LLM Gateway
 
-A provider-agnostic command-line gateway for LLM experimentation. One tool, two backends — **Ollama** (local, free, offline) and **Groq** (hosted, fast) — with uniform behavior on top: chat (streaming or not), structured output from a JSON Schema, tool calling, multi-turn sessions, and a structured log line for every request.
+A provider-agnostic gateway for LLM experimentation. One project, **two front-ends over one shared runtime** — a **CLI** and an **HTTP API (FastAPI)** (plus the runtime usable as a plain Python library) — and two backends, **Ollama** (local, free, offline) and **Groq** (hosted, fast) — with uniform behavior on top: chat (streaming or not), structured output from a JSON Schema, tool calling, multi-turn sessions, and a structured log line for every request.
 
-Why it exists: experimenting with LLMs usually means rewriting the same plumbing per provider (different HTTP shapes, error dialects, streaming formats, structured-output support). This project centralizes that plumbing once, so switching providers is a `--provider` flag and every request is measurable and logged the same way.
+Why it exists: experimenting with LLMs usually means rewriting the same plumbing per provider (different HTTP shapes, error dialects, streaming formats, structured-output support). This project centralizes that plumbing once — orchestration, validation, retries, sessions, logging — so switching providers is a `--provider` flag (or a JSON field), every request is measurable and logged the same way, and a new front-end is a thin shell over `run_turn()` rather than a re-implementation.
 
 **Key features**
 
@@ -13,6 +13,7 @@ Why it exists: experimenting with LLMs usually means rewriting the same plumbing
 - **Observability:** one JSONL record per request (latency, tokens, temperature, status, error taxonomy, tool-call counts) in `logs/requests.jsonl`
 - **Reliability:** transient-failure retry with backoff, a five-category error taxonomy, and a CLI that never crashes
 - **Extensible:** add a provider or a tool in one file — no CLI edits
+- **Two front-ends, one behavior:** the CLI and the FastAPI HTTP layer (`src/api/`) are thin shells over the same runtime — identical choreography, logging, and error taxonomy
 
 ## Requirements
 
@@ -42,6 +43,8 @@ docker exec -it ollama ollama pull llama3.2
 ### Groq setup
 
 Set `GROQ_API_KEY=your_api_key_here` in `.env` (or export it as an environment variable).
+
+For the HTTP API: `uvicorn src.api.app:app` (dependencies are already in `requirements.txt`, marked as API-layer-only).
 
 ### Configuration (`.env`)
 
@@ -74,6 +77,69 @@ python -m src.cli chat --provider groq --model openai/gpt-oss-20b \
 `--provider` is required; `--model` defaults per provider (`llama3.2` / `openai/gpt-oss-20b`).
 
 > The old flat form (`python -m src.cli --provider ... --prompt ...`) still works but is **deprecated** and prints a warning; say `chat` explicitly.
+
+### HTTP API (FastAPI)
+
+The same runtime is exposed over HTTP by `src/api/` — a second thin shell with zero business logic of its own. Run it with:
+
+```bash
+uvicorn src.api.app:app --reload      # module-level app = create_app()
+```
+
+Endpoints (all JSON; errors use one uniform envelope — see below):
+
+| Method & path | Purpose |
+|---|---|
+| `GET /healthz` | Liveness (no provider call, no logging) |
+| `GET /v1/providers` | Registered providers + default models |
+| `GET /v1/tools` | Registered tools + their JSON-Schema parameters |
+| `POST /v1/chat` | Non-streaming chat; optional `tools`, `schema`, `session_path` |
+| `POST /v1/chat/stream` | SSE streaming chat (plain chat only; tools/schema → 422) |
+| `POST /v1/structured` | text + inline `schema` → validated JSON |
+
+Non-streaming chat example:
+
+```bash
+curl -s localhost:8000/v1/chat -H 'Content-Type: application/json' -d '{
+  "provider": "ollama",
+  "system": "You are terse.",
+  "prompt": "Explain TCP handshakes",
+  "temperature": 0.2
+}'
+```
+
+A turn with a schema-validated final answer (schema goes **inline** in the body — the server never reads client paths):
+
+```bash
+curl -s localhost:8000/v1/chat -H 'Content-Type: application/json' -d '{
+  "provider": "groq",
+  "prompt": "Ada Lovelace, 36, mathematician and writer, based in London, England.",
+  "schema": {"type": "object", "properties": {"name": {"type": "string"}, "age": {"type": "integer"}}, "required": ["name", "age"]}
+}'
+# → {"text": "...", "data": {"name": "Ada Lovelace", "age": 36}, "messages": [...], "usage": {...}, ...}
+```
+
+The response carries the **full transcript** in `messages`, so stateless clients keep looping by sending it back as `messages` on the next turn. Server-side multi-turn is opt-in via `session_path`, which is only honored when the app was created with a `session_root` (`create_app(session_root=...)`) and is confined under it — paths outside the root are rejected 400 before any provider call. Sessions are **disabled by default**.
+
+Streaming is plain chat only (tool-bearing and schema turns are non-streaming by runtime contract); requests combining `stream: true` with `tools`/`schema` are rejected 422 rather than silently downgraded.
+
+Error envelope — the runtime's five-category taxonomy maps to HTTP statuses in one place:
+
+| HTTP status | Condition | `error.type` |
+|---|---|---|
+| 400 | unknown provider/tool, unusable session, path outside `session_root` | `format` |
+| 413 | `ContextOverflowError` | `context` |
+| 422 | body validation, `UnsupportedSchemaError`, `ExtractionError`, `ToolLoopError` | `format` |
+| 424 | `SchemaError` (schema document itself invalid) | `format` |
+| 429 | `RateLimitError` | `rate_limit` |
+| 502 / 504 | `ModelError` (504 when the cause is a read timeout) | `model` |
+| 500 | anything unexpected (normalized; no raw traceback) | `unknown` |
+
+```json
+{ "error": { "type": "rate_limit", "subtype": "RateLimitError", "provider": "groq", "message": "..." } }
+```
+
+> **No auth, no CORS, no rate limiting in v1.** This is an experimentation gateway; `POST` requests can invoke models. Don't expose it unguarded beyond localhost.
 
 ### Multi-turn sessions
 
@@ -153,13 +219,14 @@ Schemas are converted to an internal Pydantic model, so a deliberate subset of J
 | Tuple-style `items` | ❌ |
 | Root schema that isn't `"type": "object"` | ❌ |
 
-Three distinct schema-related errors, all reported as `[format:<Class>]` on stderr: `SchemaError` (not valid JSON Schema), `UnsupportedSchemaError` (valid but uses an unsupported feature), `ExtractionError` (model never produced valid JSON matching the schema within `--max-retries`).
+Three distinct schema-related errors: `SchemaError` (not valid JSON Schema), `UnsupportedSchemaError` (valid but uses an unsupported feature), `ExtractionError` (model never produced valid JSON matching the schema within `--max-retries`). The CLI reports them as `[format:<Class>]` on stderr; the HTTP layer maps them to 424/422/422 in the uniform error envelope.
 
 ## Project structure
 
 ```text
 src/
 ├── cli.py             # entry point: argument parsing + I/O only
+├── api/               # HTTP front-end (FastAPI): routes, SSE streaming, error→status mapping
 ├── token_utils.py     # pre-request token counting (tiktoken → heuristic fallback)
 ├── core/              # orchestrator (tool loop + schema coercion), sessions,
 │                      # error taxonomy, JSONL logging, telemetry, shared types
@@ -170,21 +237,25 @@ src/
 examples/structured/   # four schema + input example pairs (test-guarded)
 experiments/           # measurement templates (sampling variance, context, failures)
 tests/                 # pytest suite — fully offline, providers mocked
+documents/REPORT.md    # the full technical report (see Documentation)
+context/               # condensed task-oriented facts for AI assistants
 ```
 
 ## Testing
 
 ```bash
-python -m pytest -q    # 227 tests, no network or API keys required
+python -m pytest -q    # 420 tests, no network or API keys required
 ```
 
 ## Documentation
 
-- **`REPORT.md`** — the full technical report: architecture, design rationale, decisions and trade-offs, limitations, and roadmap. Read this before modifying the system.
+- **`documents/REPORT.md`** — the full technical report: architecture, design rationale, decisions and trade-offs, limitations, and roadmap. Read this before modifying the system.
+- **`context/`** — condensed, task-oriented facts (architecture map, conventions, settled decisions, gotchas) written for AI assistants working on the repo.
+- Source docstrings carry most per-module design rationale, kept next to the code.
 
 ## Adding a provider
 
-Implement `BaseProvider`, decorate the class, and import the module once — the CLI picks it up automatically (argparse choices, model defaulting, instantiation):
+Implement `BaseProvider`, decorate the class, and import the module once — both front-ends pick it up automatically (the CLI's argparse choices/model defaulting, the HTTP layer's `GET /v1/providers` and per-request instantiation):
 
 ```python
 # src/providers/my_provider.py
@@ -197,4 +268,4 @@ class MyProvider(BaseProvider):
     # implement chat() and chat_stream()
 ```
 
-Then add `from . import my_provider as _my_provider  # noqa: F401` to `src/providers/__init__.py`. See `REPORT.md` §15 for the complete recipe and contracts.
+Then add `from . import my_provider as _my_provider  # noqa: F401` to `src/providers/__init__.py`. See `documents/REPORT.md` §15 for the complete recipe and contracts.

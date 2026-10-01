@@ -1,4 +1,4 @@
-"""Step 5 tests (API_LAYER_PLAN.md §7): src/api/app.py routes.
+"""Tests for src/api/app.py routes — /v1/chat, /v1/structured, discovery.
 
 TestClient over ``create_app()`` — the API-layer analogue of the CLI wiring
 tests. The provider seam is patched at ``src.api.app.deps.resolve_provider``

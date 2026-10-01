@@ -1,4 +1,4 @@
-"""Step 6 tests (API_LAYER_PLAN.md §7): src/api/streaming.py + /v1/chat/stream.
+"""Tests for src/api/streaming.py and the POST /v1/chat/stream endpoint.
 
 TestClient with streamed response iteration over `create_app()`. The
 provider seam is patched at `src.api.app.deps.resolve_provider` (the API's

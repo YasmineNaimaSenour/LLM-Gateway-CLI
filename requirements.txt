@@ -2,6 +2,7 @@ requests>=2.31
 tiktoken>=0.7   # optional: falls back to a heuristic token counter if not installed
 pydantic>=2.0   # structured extraction: internal schema->model conversion + validation
 jsonschema>=4.18 # structured extraction: JSON Schema meta-validation
+python-dotenv>=1.0 # providers load .env at import (OLLAMA_*/GROQ_* overrides)
 
 # --- HTTP API layer (src/api/) only — the runtime and CLI do not need these ---
 fastapi>=0.110

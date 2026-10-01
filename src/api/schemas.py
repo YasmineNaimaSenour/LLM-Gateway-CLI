@@ -3,7 +3,7 @@
 Pydantic is used here ONLY as HTTP DTO validation — a deliberate detail of
 src/api/ unrelated to src/structured's internal schema→model machinery.
 The vocabulary mirrors the runtime exactly (ChatMessage / ToolCall /
-OrchestrationResult / ExtractionResult) so mappers.py (Step 2) can convert
+OrchestrationResult / ExtractionResult) so mappers.py can convert
 1:1 with no reshaping and no information loss.
 
 No business logic: two cross-field validators guard the request contract
@@ -175,7 +175,7 @@ class MessageOut(BaseModel):
 
     The session-JSONL record shape (core.session._message_to_record: unset
     optional fields omitted, `content` kept even when None) is produced by
-    mappers.py (Step 2), which owns the ChatMessage/MessageOut ⇄ record
+    mappers.py, which owns the ChatMessage/MessageOut ⇄ record
     conversion and cross-checks it against `_message_to_record`.
     """
 
@@ -203,7 +203,7 @@ class ChatResponse(BaseModel):
     """One completed chat turn: the final text, optional validated data,
     the full transcript (continuation contract), and usage/tool stats.
 
-    `warnings` carries non-fatal notes (Step 7's over-HTTP channel for
+    `warnings` carries non-fatal notes (the over-HTTP channel for
     what the CLI prints to stderr, e.g. a session save that failed after
     a successful turn); empty when nothing noteworthy happened.
     """

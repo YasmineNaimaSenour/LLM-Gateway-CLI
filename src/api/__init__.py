@@ -7,7 +7,7 @@ re-implemented here.
 
 Note: this package exists for the HTTP API layer only. No module outside
 ``src/api/`` imports FastAPI/uvicorn, keeping the runtime's dependency
-footprint unchanged (API_LAYER_PLAN.md, D2).
+footprint unchanged.
 
 Public API (D15): ``create_app`` — the only object other modules should
 import. The routes, dependencies, mappers, and error handlers are the

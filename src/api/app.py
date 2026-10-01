@@ -96,10 +96,11 @@ def create_app(
         return {"log_path": log_path} if log_path is not None else {}
 
     # ------------------------------------------------------------------
-    # Per-request resolution (Step 4's framework-agnostic deps, bound as
-    # Depends here). The order below is the CLI's own choreography —
-    # schema, then tools, then session, then provider construction — so
-    # every request-shaped failure surfaces before a provider exists.
+    # Per-request resolution (deps.py's framework-agnostic functions,
+    # bound as Depends here). The order below is the CLI's own
+    # choreography — schema, then tools, then session, then provider
+    # construction — so every request-shaped failure surfaces before a
+    # provider exists.
     # ------------------------------------------------------------------
 
     def _resolve_chat_schema(body: ChatRequest) -> Optional[dict]:
@@ -132,15 +133,15 @@ def create_app(
 
         Load errors (`SessionError`: the path exists but holds no valid
         session records) are re-raised as request-shaped `FormatError`s so
-        the Step 3 handler turns them into a 400 *before any provider call*
+        the error handler turns them into a 400 *before any provider call*
         — mirroring the CLI, where a corrupt session file is reported before
         the turn runs.
 
         A continuation (prior history exists) does NOT re-inject
         system/schema: the saved transcript already carries them — and the
         CLI's non-fatal stderr notes for those cases surface here as
-        entries in the response's `warnings` list (Step 7's decided
-        channel), HTTP still 200. A first turn (no file yet) notes nothing.
+        entries in the response's `warnings` list, HTTP still 200. A first
+        turn (no file yet) notes nothing.
         """
         warnings: List[str] = []
         prior_messages = None
@@ -220,14 +221,14 @@ def create_app(
             # D8's loud-failure rule, applied at the routing level: this is
             # the non-streaming endpoint, and answering a stream=true request
             # with a full JSON body would silently downgrade the contract.
-            # /v1/chat/stream (Step 6) is the streaming surface.
+            # /v1/chat/stream is the streaming surface.
             raise FormatError(
                 "stream=true is not supported on POST /v1/chat; use POST /v1/chat/stream."
             )
         tool_specs, tool_executor = tool_bundle
         timer = Timer().start()
 
-        # Step 7's session choreography: load errors → 400 pre-provider,
+        # Session choreography: load errors → 400 pre-provider,
         # continuation notes as response `warnings`.
         messages, warnings = _load_session_and_assemble(body, schema=schema, session_path=session_path)
 
@@ -250,7 +251,7 @@ def create_app(
 
         # Session save — after success only; a failed turn never persists
         # (contract #5). A save failure must not fail a completed turn, so
-        # it degrades to a warning on the response (Step 7's stderr
+        # it degrades to a warning on the response (the stderr
         # analogue) appended to any continuation notes from the guard.
         if session_path:
             try:
@@ -302,7 +303,7 @@ def create_app(
         becomes an in-band error event (streaming.py).
         """
         timer = Timer().start()
-        # Step 7's session choreography (same as /v1/chat: 400 on load
+        # Session choreography (same as /v1/chat: 400 on load
         # errors, continuation notes in the done event's `warnings`).
         messages, warnings = _load_session_and_assemble(body, schema=None, session_path=session_path)
         pre_count_tokens_in = count_message_tokens([m.to_content_dict() for m in messages])

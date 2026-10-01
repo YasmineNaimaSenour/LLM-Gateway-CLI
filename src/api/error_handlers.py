@@ -47,8 +47,8 @@ _STATUS_BY_ERROR_TYPE: dict[ErrorType, int] = {
 
 # Request-shaped FormatError subtypes → specific client-error statuses (D11):
 #   424 Failed Dependency — the schema document itself is broken (neither a
-#       transport failure nor a normal semantic mismatch; reviewer taste per
-#       the plan: a one-line dict entry).
+#       transport failure nor a normal semantic mismatch; a one-line dict
+#       entry if the mapping is ever revisited).
 #   422 Unprocessable Entity — the document is valid JSON Schema but uses
 #       features outside the supported subset; aligns with FastAPI's own 422
 #       for semantically invalid bodies.
@@ -138,8 +138,8 @@ def register_handlers(app, *, log_path=None) -> None:
 
     @app.exception_handler(Exception)
     async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
-        # Idempotent normalization (Step 3 plan): non-Gateway surprises
-        # become UnknownError — classified, logged, enveloped; never a raw
+        # Idempotent normalization: non-Gateway surprises become
+        # UnknownError — classified, logged, enveloped; never a raw
         # traceback in the body.
         gateway_exc = to_gateway_error(exc, provider="unknown")
         log_gateway_error(gateway_exc, latency_ms=0.0, log_path=log_path)
@@ -148,7 +148,7 @@ def register_handlers(app, *, log_path=None) -> None:
     # FastAPI's own body-validation 422 and route-not-found 404 are
     # Starlette HTTPExceptions; keep their built-in handling (checked
     # status codes, no GatewayError semantics) rather than enveloping them —
-    # the plan's D6 choke point covers GatewayErrors and unexpected
+    # the D6 choke point covers GatewayErrors and unexpected
     # exceptions, which are the only things routes raise.
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:

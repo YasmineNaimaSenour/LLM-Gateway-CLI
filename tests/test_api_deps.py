@@ -1,4 +1,4 @@
-"""Step 4 tests (API_LAYER_PLAN.md §7): src/api/deps.py.
+"""Tests for src/api/deps.py — the API layer's per-request resolution seam.
 
 Unit tests for the API layer's resolution seam — registry-driven, no
 FastAPI app, no network. Registry isolation uses the runtime's own
@@ -118,7 +118,7 @@ class TestResolveProvider:
         assert "Missing credential" in str(excinfo.value)
 
     def test_real_groq_without_api_key_raises_model_error(self, provider_registry_snapshot, monkeypatch):
-        # The plan's concrete scenario, env-cleared (groq IS registered).
+        # Concrete real-provider scenario, env-cleared (groq IS registered).
         monkeypatch.delenv("GROQ_API_KEY", raising=False)
         with pytest.raises(ModelError):
             deps.resolve_provider("groq")

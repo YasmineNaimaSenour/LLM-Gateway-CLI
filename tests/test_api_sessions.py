@@ -1,4 +1,4 @@
-"""Step 7 tests (API_LAYER_PLAN.md §7): sessions over HTTP + final integration.
+"""Tests for sessions over HTTP (src/api/) + end-to-end integration.
 
 Mirrors tests/test_session_cli.py (the CLI's session wiring matrix) at the
 HTTP layer: history loading, continuation semantics (no re-injection of

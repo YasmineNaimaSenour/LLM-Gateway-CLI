@@ -1,4 +1,4 @@
-"""Step 3 tests (API_LAYER_PLAN.md §7): src/api/error_handlers.py.
+"""Tests for src/api/error_handlers.py — GatewayError → HTTP status mapping.
 
 TestClient on a tiny probe app whose routes raise — the API-layer analogue
 of the CLI error tests. Each probe pins: HTTP status from the D11 map, the

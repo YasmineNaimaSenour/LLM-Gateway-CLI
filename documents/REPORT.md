@@ -1,8 +1,8 @@
 # LLM Gateway — Project Report
 
-**Status:** complete for its declared scope (M1: chat/structured; M2: tools, chat-schema, sessions) · **Test suite:** 227 tests, all passing · **Runtime target:** Python 3.10+ (developed on 3.14)
+**Status:** complete for its declared scope (M1: chat/structured; M2: tools, chat-schema, sessions; audit hardening; HTTP API layer) · **Test suite:** 420 tests, all passing · **Runtime target:** Python 3.10+ (developed on 3.14)
 
-This report is the definitive technical documentation for the project. It covers what the system does, why each piece exists, how the pieces interact, and what a developer needs to know to modify or extend it safely. Every claim reflects the code as of this writing; the "future / deferred" sections distinguish what is *not* built. A short user-facing guide lives in [`README.md`](README.md); condensed, task-oriented facts for AI assistants live in [`context/`](context/). The three are complementary and do not duplicate each other.
+This report is the definitive technical documentation for the project. It covers what the system does, why each piece exists, how the pieces interact, and what a developer needs to know to modify or extend it safely. Every claim reflects the code as of this writing; the "future / deferred" sections distinguish what is *not* built. A short user-facing guide lives in [`README.md`](../README.md); condensed, task-oriented facts for AI assistants live in [`context/`](../../context/). The three are complementary and do not duplicate each other.
 
 ---
 
@@ -31,13 +31,15 @@ This report is the definitive technical documentation for the project. It covers
 
 ### 1.1 Goal
 
-A **provider-agnostic CLI gateway for LLM experimentation**: one command-line tool that talks to different LLM backends (today: local **Ollama**, hosted **Groq**) behind a single interface, and layers uniform, backend-independent services on top:
+A **provider-agnostic gateway for LLM experimentation**: one project that talks to different LLM backends (today: local **Ollama**, hosted **Groq**) behind a single interface, and layers uniform, backend-independent services on top:
 
 - plain chat (streaming and non-streaming),
 - structured output (text + JSON Schema → validated JSON),
 - tool calling (model invokes registered functions in a loop),
-- multi-turn sessions that survive across CLI invocations,
+- multi-turn sessions that survive across invocations,
 - structured request logging and latency telemetry for every call.
+
+All of it is exposed through **two front-ends over one shared runtime**: the `src.cli` command-line tool (three usage patterns: plain, streamed, sessions) and the `src.api` FastAPI HTTP layer (`/v1/chat`, `/v1/chat/stream` SSE, `/v1/structured`) — plus the runtime as a plain importable Python library.
 
 ### 1.2 Motivation
 
@@ -50,19 +52,20 @@ Experimenting with LLMs normally means rewriting the same plumbing per provider:
 
 ### 1.3 Scope
 
-**In scope (implemented):** the two subcommands (`chat`, `structured`) with all the flag combinations documented in the README; the provider/tool registries; sessions; the error taxonomy; JSONL logging; token counting; HTTP retry; the structured-extraction pipeline; four guarded example schema/input pairs; a full pytest suite.
+**In scope (implemented):** the two CLI subcommands (`chat`, `structured`) with all the flag combinations documented in the README; the provider/tool registries; sessions; the error taxonomy; JSONL logging; token counting; HTTP retry; the structured-extraction pipeline; four guarded example schema/input pairs; the FastAPI HTTP layer (`src/api/`) with SSE streaming, inline schemas, root-confined sessions, and the taxonomy→status error mapping; a full pytest suite.
 
-**Out of scope (deliberately not built — see §14):** a server/daemon mode, plugin or MCP-based tool discovery, provider-side cost estimation, conversation compaction/summarization, async or parallel request execution, and packaging/distribution (`pyproject.toml`).
+**Out of scope (deliberately not built — see §14):** API auth/CORS/rate limiting, plugin or MCP-based tool discovery, provider-side cost estimation, conversation compaction/summarization, async request execution, and packaging/distribution (`pyproject.toml`).
 
 ### 1.4 Sources of truth and how to read the docs
 
 | Document | Audience | Content |
 |---|---|---|
-| `README.md` | Users | What it is, install, usage examples, config |
-| `REPORT.md` (this file) | Current + future developers | Full architecture, rationale, decisions, roadmap |
+| `README.md` | Users | What it is, install, usage examples, config, HTTP API quickstart |
+| `documents/REPORT.md` (this file) | Current + future developers | Full architecture, rationale, decisions, roadmap |
 | `context/` | AI assistants working on the repo | Condensed facts, conventions, constraints per topic |
-| `AUDIT.md` | Historical record | The 24-item code audit; every item resolved, resolution notes inline |
 | `src/**` docstrings | Everyone | Module-level docstrings carry most design rationale, kept next to the code |
+
+Historical records live gitignored under `trash/`: `AUDIT.md` (the 24-item code audit, every item resolved with inline notes) and the retired `API_LAYER_PLAN.md` (the HTTP layer's planning document, kept as the rationale behind §5.7's design).
 
 ---
 
@@ -93,16 +96,19 @@ Experimenting with LLMs normally means rewriting the same plumbing per provider:
 
 ### 3.1 The one-paragraph version
 
-`src/cli.py` parses arguments and does I/O — nothing else. Both subcommands delegate to runtime primitives: `core/orchestrator.run_turn()` (the tool-call loop + schema coercion shared by both commands), `structured/extractor.py` (the validate-and-retry core), and the provider behind `providers/base.BaseProvider`. Providers translate between the runtime's provider-agnostic vocabulary (`ChatMessage`, `ToolSpec`, `ToolCall`, `ToolResult`) and their own wire formats, and share one HTTP transport with retry (`providers/http_utils.py`). Registries (`providers/registry.py`, `tools/registry.py`) make providers and tools first-class by name at import time. Failures funnel into a single error taxonomy (`core/errors.py`) and a single logging choke point (`core/logger.log_request`).
+`src/cli.py` and `src/api/` parse requests and do I/O — nothing else. All front-ends delegate to runtime primitives: `core/orchestrator.run_turn()` (the tool-call loop + schema coercion shared by every path), `structured/extractor.py` (the validate-and-retry core), and the provider behind `providers/base.BaseProvider`. Providers translate between the runtime's provider-agnostic vocabulary (`ChatMessage`, `ToolSpec`, `ToolCall`, `ToolResult`) and their own wire formats, and share one HTTP transport with retry (`providers/http_utils.py`). Registries (`providers/registry.py`, `tools/registry.py`) make providers and tools first-class by name at import time. Failures funnel into a single error taxonomy (`core/errors.py`) and a single logging choke point (`core/logger.log_request`); over HTTP, that taxonomy additionally maps to statuses in one dict (`api/error_handlers.py`).
 
 ### 3.2 Package map and dependency direction
 
 ```text
-              ┌──────────────────────────── CLI (src/cli.py) ────────────────────────────┐
-              │  argument parsing, file I/O, stdout/stderr, logging calls, session wiring │
-              └───────┬────────────────────────┬─────────────────────────┬───────────────┘
-                      │                        │                         │
-                      ▼                        ▼                         ▼
+   ┌ CLI (src/cli.py) ────────────┐   ┌ HTTP API (src/api/) ────────────────────┐
+   │ argparse, file I/O,          │   │ FastAPI routes, Pydantic DTO schemas,   │
+   │ stdout/stderr, logging calls │   │ mappers, deps, SSE streaming,           │
+   │                              │   │ GatewayError → HTTP status (one dict)   │
+   └──────────────┬───────────────┘   └──────────────────┬──────────────────────┘
+                  │          identical choreography       │
+                  └──────────────────┬────────────────────┘
+                                     ▼
         ┌──────────────────────┐   ┌────────────────────────┐   ┌─────────────────────┐
         │ core/orchestrator.py │   │ structured/extractor.py│   │ core/session.py     │
         │  run_turn()          │──▶│  coerce_to_schema()    │   │ SessionStore (JSONL)│
@@ -135,7 +141,7 @@ Experimenting with LLMs normally means rewriting the same plumbing per provider:
   core/errors.py + core/logger.py + core/telemetry.py — used by everything above
 ```
 
-**The dependency rule:** everything points *down* to `core` (types, errors) and `providers/base`. Nothing in `core/` imports `providers/` except `orchestrator.py`, which imports `providers.base` (the interface only — never a concrete provider). `structured/` and `tools/` import the provider interface, not implementations. Concrete providers are known only to the registry. This is what makes "provider-agnostic" true in code rather than in prose.
+**The dependency rule:** everything points *down* to `core` (types, errors) and `providers/base`. Nothing in `core/` imports `providers/` except `orchestrator.py`, which imports `providers.base` (the interface only — never a concrete provider). `structured/` and `tools/` import the provider interface, not implementations. Concrete providers are known only to the registry. The API layer is a pure consumer of the runtime packages (the one cross-shell import — `cli.build_messages` — is pure choreography with no argparse side effects), and FastAPI/uvicorn are imported nowhere else. This is what makes "provider-agnostic" and "front-end-agnostic" true in code rather than in prose.
 
 ### 3.3 Why a runtime/CLI split
 
@@ -144,6 +150,8 @@ The CLI is deliberately a *thin shell*: argument parsing, file reading/writing, 
 - Both `chat` and `structured` share one implementation of tool looping and schema coercion instead of two drifting copies.
 - A future interactive REPL, HTTP server, or library consumer calls `run_turn()` directly; nothing about it assumes a process-per-prompt CLI.
 - Tests exercise runtime behavior through the same entry point the CLI uses, so CLI tests stay shallow (wiring) while runtime tests stay deep (semantics).
+
+The HTTP layer proved the point: `src/api/` was added with **zero changes to any runtime module** — the second shell was pure choreography over primitives that were already shaped for it (state passed explicitly, registries instance-based, `run_turn` transcript-returning).
 
 ---
 
@@ -158,7 +166,8 @@ These are the recurring, load-bearing principles; each module's docstring applie
 5. **Explicit contracts over implicit globals.** `__all__` declared per package (guarded by tests); `to_content_dict()` named for exactly what it does; `run_turn()` never mutates caller state and returns the full transcript.
 6. **Append-only JSONL as the persistence idiom.** Request logs and session files share the same crash-safe, diffable, `jq`-able format — one JSON object per line.
 7. **Registries make extension a one-file change.** Providers and tools self-register at import time; the CLI learns choices, defaults, and instantiation from the registries.
-8. **stdout is the answer channel; stderr is everything else.** Deprecation warnings, retry notices, tool-loop progress, and session-save warnings all go to stderr so scripts parsing stdout are never surprised.
+8. **stdout is the answer channel; stderr is everything else.** Deprecation warnings, retry notices, tool-loop progress, and session-save warnings all go to stderr so scripts parsing stdout are never surprised. Over HTTP: the response body is the answer; warnings ride a `warnings` list; errors use one uniform envelope.
+9. **Front-ends are interchangeable shells.** Any capability added to a runtime module is automatically available to every front-end; a new front-end is choreography, never a re-implementation. Nothing outside `src/api/` may import FastAPI.
 
 ---
 
@@ -324,7 +333,7 @@ Pydantic is an **implementation detail of this package**: nothing outside `src/s
 
 Note the deliberate contract difference: `run_turn()` copies its input list; `coerce_to_schema()` **mutates** the list it is given (retry appends must be visible to the next call) — both documented in their docstrings. Provider-raised `GatewayError`s (rate limits, etc.) propagate unchanged so they keep their classification.
 
-`extract()` is the thin wrapper for the `structured` command: builds the extraction-specific system prompt ("you are a precise data-extraction engine... ONLY a single JSON object") + user message, delegates to `coerce_to_schema()`. `schema_instruction_message()` builds the distinct system message for `chat --schema` ("*once you are ready to give your final answer*...") — different wording because chat turns may use tools first; the orchestrator injects it via the CLI's `build_messages()`.
+`extract()` is the thin wrapper for the `structured` command: builds the extraction-specific system prompt ("you are a precise data-extraction engine... ONLY a single JSON object") + user message, delegates to `coerce_to_schema()`. `schema_instruction_message()` builds the distinct system message for `chat --schema` ("*once you are ready to give your final answer*...") — different wording because chat turns may use tools first; the orchestrator injects it via the CLI's `build_messages()` (which the API layer reuses for its own message assembly — pure choreography, safe to import).
 
 ### 5.4 `src/tools/` — tool calling
 
@@ -345,6 +354,21 @@ Responsibilities, exhaustively: argparse construction (choices sourced from `pro
 Error handling is two nested safety nets: `except GatewayError` (already classified) then `except Exception` → `to_gateway_error` → both flow through the single `_log_and_report()` choke point, which logs the record and prints `[<category>:<ClassName>] <message>` to stderr, then returns exit code 1. The CLI structurally cannot crash (pinned by tests), and stderr's `[type:subtype]` and the log record's fields are guaranteed consistent because both come from the same line of code.
 
 The `--timeout` flag on both subcommands flows `CLI → build_provider() → registry → constructor`; providers without the knob ignore it via the registry's signature check.
+
+### 5.7 `src/api/` — the HTTP layer (a second thin shell)
+
+`src/api/` exposes the runtime over HTTP with **zero business logic and zero runtime changes**. Design decisions D1–D15 and their rationale are recorded in the module docstrings and the (retired, gitignored) `API_LAYER_PLAN.md`; the durable facts:
+
+- **`app.py` — `create_app(session_root=None, log_path=None)`.** Factory (fresh app per test, no cross-test router state) plus a module-level `app = create_app()` so `uvicorn src.api.app:app` works with zero flags. Routes are plain `def` (the provider contract is synchronous; Starlette runs them — and the blocking provider calls inside — on the threadpool instead of stalling the event loop). Route handlers are the CLI's exact choreography: resolve in CLI order (schema → tools → session → provider, every failure pre-network), assemble messages (session continuation without re-injecting system/schema; CLI's stderr notes become the response's `warnings` list), pre-count, one runtime call, session save after success only (save failure → `warnings`, still 200), one CLI-identical success record via `log_request`.
+- **Routes.** `GET /healthz` (liveness only), `GET /v1/providers` (registry-driven), `GET /v1/tools` (names + JSON-Schema parameters), `POST /v1/chat` (`run_turn`; `stream: true` here is a loud 400, not a downgrade), `POST /v1/chat/stream` (SSE; `ChatStreamRequest` rejects tools/schema at body validation → 422 — HTTP must not degrade a contract silently the way the CLI's stderr notice does), `POST /v1/structured` (`extract`).
+- **`schemas.py` — DTOs only.** HTTP-facing vocabulary mirroring the runtime 1:1 (`MessageIn` accepts full session-record shapes so transcripts round-trip). Two cross-field validators: exactly one of (`messages`, `system`+`prompt`); no `stream` with tools/schema. Schema is **inline** in the body (D7) — the server never reads client-supplied paths; defaults import from the runtime, never duplicated.
+- **`mappers.py` — dict ⇄ runtime vocabulary.** Lossless `MessageIn → ChatMessage` / `ChatMessage → MessageOut` (the out-shape matches the session record vocabulary), usage preference rules (provider-billed `tokens_in` wins, incl. `0`; else pre-count + `count_method()`), and `validate_inline_schema` — the `load_and_validate_schema()` pipeline minus the file read, preserving the `SchemaError`/`UnsupportedSchemaError` distinction.
+- **`deps.py` — framework-agnostic resolution.** `resolve_provider` (per-request `registry.get_provider`; constructor side effects like Groq's missing key stay call-time `ModelError`s), `resolve_tools` (+ executor), `validate_schema`, `validate_session_path` (`session_root` confinement: disabled root → 400; absolute paths and `..`-traversal rejected both textually and on `Path.resolve()`). FastAPI `Depends` bindings live in `app.py`.
+- **`error_handlers.py` — the one error choke point.** The `_log_and_report()` analogue: a `GatewayError` handler plus a catch-all going through idempotent `to_gateway_error()`; the one `ErrorType → status` dict — `rate_limit`→429, `context`→413, `model`→502 (504 when the cause is a `requests.Timeout`), `unknown`→500, `format` split by subtype (request-shaped → 400/424 for `SchemaError`; model-output-shaped `ExtractionError`/`ToolLoopError` → 422) — rendering `{"error": {type, subtype, provider, message}}` with `message == str(exc)`, and writing the CLI-identical error log record. Starlette `HTTPException`s (FastAPI's own 404/422 shapes) pass through unenveloped.
+- **`streaming.py` — the SSE bridge.** A sync generator owning the stream's choreography: each chunk → `data: {"delta": ...}`; natural end → assistant message append, session save (failure → `warnings` on the done event), success record with the CLI's streaming token rules (client-side counts; chunks carry no usage), `data: {"done": true, "text": ..., "warnings": [...]}`, `[DONE]`. Any mid-stream error → CLI-identical error record + one `data: {"error": {...}}` + `[DONE]` (SSE has no HTTP status after the headers). Request-shaped failures raise in the route before the response starts.
+- **Explicit non-goals (v1).** No auth, no CORS, no rate limiting (experimentation gateway); no OpenAI-compatible wire format; sessions disabled unless `session_root` is configured; no per-app provider registries (`DEFAULT_REGISTRY`, like the CLI).
+
+The public surface is `create_app` only (`src.api.__all__`); everything else is package-internal, matching the project's declared-API convention.
 
 ### 5.6 `src/token_utils.py` — token counting
 
@@ -424,6 +448,8 @@ failed turn: nothing persisted; same command retried resumes cleanly
 
 ### 6.7 Every failure path
 
+CLI:
+
 ```text
 exception raised anywhere
 → GatewayError? keep : to_gateway_error(exc, provider=...)   (idempotent)
@@ -431,6 +457,32 @@ exception raised anywhere
                    print "[category:ClassName] message" → stderr
 → return exit code 1  (never an unhandled exception)
 ```
+
+HTTP (same normalization, different rendering):
+
+```text
+exception raised in a route (or mid-stream)
+→ to_gateway_error(exc, provider=...)   (idempotent — the catch-all path)
+→ _status_for: the one ErrorType→status dict (+ format-subtype split, + timeout→504)
+→ log_request(status=error, error_type=..., error_subtype=...)   (CLI-identical fields)
+→ {"error": {"type", "subtype", "provider", "message": str(exc)}} + that status
+
+mid-stream (headers already sent): same log record, then one SSE `error` event + [DONE]
+```
+
+### 6.8 HTTP chat (`POST /v1/chat`)
+
+```text
+Pydantic body validation (422 on malformed; one-of messages/prompt; no stream+tools/schema)
+→ deps in CLI order: inline schema → tools → session_path (root-confined) → provider   [all 4xx pre-network]
+→ session? load_session_messages (SessionError → 400) — continuation does not re-inject system/schema (→ warnings)
+→ count_message_tokens pre-count (identical to the CLI)
+→ run_turn(provider, messages, tools, executor, response_schema, ...)
+→ session? save_session_messages (failure → warnings, HTTP still 200)
+→ log_request(success, CLI-identical fields) → 200 ChatResponse{text, data, messages, usage, warnings, ...}
+```
+
+`POST /v1/chat/stream` runs the same preamble, then `sse_chat_stream` maps `provider.chat_stream()` chunks to `delta` events and ends with `done` + `[DONE]`; `POST /v1/structured` runs the schema/provider deps then `extract()`.
 
 ---
 
@@ -491,6 +543,7 @@ Models wrap JSON in prose or fences unpredictably. Order matters: whole-text par
 - **Streaming text mid-tool-loop** — rejected: the streaming contract cannot represent tool payloads; would trade silence for wrongness (AUDIT #15).
 - **`pyproject.toml` now** — deferred: no package metadata exists yet; the runtime/dev split already positions the project for `[project.optional-dependencies]` later (AUDIT #18).
 - **Keeping `DEFAULT_MODELS` in the CLI** — replaced by per-provider registry defaults; the CLI no longer names any provider string or imports any concrete class (AUDIT #5).
+- **API-layer variants of earlier decisions** — `stream+tools/schema` silently downgraded → 422 instead (a stderr notice is not an HTTP contract); server-side schema *paths* → inline schemas instead (an HTTP path parameter is an arbitrary-file-read primitive); `async def` routes over the sync provider contract → `def` routes on the threadpool instead (correct today; an async provider interface is deferred runtime work).
 
 ---
 
@@ -523,7 +576,7 @@ Precedence everywhere: **explicit CLI flag / constructor argument > environment 
 
 ```bash
 pip install -r requirements-dev.txt   # includes pytest
-python -m pytest -q                   # 227 tests, no network, no API keys
+python -m pytest -q                   # 420 tests, no network, no API keys
 ```
 
 ### 9.2 Suite structure and philosophy
@@ -546,8 +599,15 @@ python -m pytest -q                   # 227 tests, no network, no API keys
 | `test_token_utils.py` | Method reporting, heuristic arithmetic, edge cases |
 | `test_public_api.py` | Every `__all__` name resolves; top-level `src` exports nothing |
 | `test_examples.py` | Examples directory matches declared pairs; every schema passes subset+build; feature matrix covered; instances validate |
+| `test_api_schemas.py` | DTO parse/defaults, one-of messages/prompt, stream+tools/schema rejection, schema-alias round-trip |
+| `test_api_mappers.py` | Lossless DTO ⇄ runtime vocabulary, session-record shape guard, inline-schema validation, usage preference rules |
+| `test_api_errors.py` | Every status row incl. the 504 timeout rule and format-subtype split; envelope shape; body/log consistency; one record per error |
+| `test_api_deps.py` | Registry-driven resolution, tool resolution, session_root confinement matrix, constructor-failure → 502 |
+| `test_api_chat.py` | `/v1/chat` + discovery routes; CLI-identical choreography, logging, and warnings; failed-turn session pin |
+| `test_api_streaming.py` | SSE event grammar, token rules, mid-stream error events, save-after-success/never-persist pins |
+| `test_api_sessions.py` | The full session matrix at the HTTP layer + `session_root` enforcement end-to-end |
 
-Philosophy: runtime tests go deep through the same entry points the CLI uses; CLI tests stay shallow (wiring, I/O, logging) and mock `build_provider`; no test touches the network or requires a key. The `sleep` callable in `post_with_retry` and registry `snapshot()`/`restore()` exist specifically so tests can run fast and isolated. Guard tests pin non-obvious invariants: stderr/log field agreement, one-JSON-object-per-line, transcript non-mutation, alias round-trips, examples-not-rotted.
+Philosophy: runtime tests go deep through the same entry points the CLI uses; CLI tests stay shallow (wiring, I/O, logging) and mock `build_provider`; API tests exercise the app through `TestClient` and lean on the runtime's own registry `snapshot()`/`restore()` isolation; no test touches the network or requires a key. The `sleep` callable in `post_with_retry` and registry `snapshot()`/`restore()` exist specifically so tests can run fast and isolated. Guard tests pin non-obvious invariants: stderr/log field agreement, one-JSON-object-per-line, transcript non-mutation, alias round-trips, examples-not-rotted.
 
 ---
 
@@ -570,9 +630,9 @@ Usage: `python -m src.cli structured --provider ollama --input examples/structur
 
 ## 11. Dependencies
 
-Runtime (`requirements.txt`): `requests>=2.31` (HTTP), `pydantic>=2.0` (schema→model + validation), `jsonschema>=4.18` (meta-validation), `tiktoken>=0.7` (optional at runtime: absent → heuristic counting). **Known gap:** both providers `load_dotenv()` from `python-dotenv`, which is installed in the dev environment but **not listed in `requirements.txt`** — a fresh runtime install would fail on import. Fix is one line; it is recorded here and in `context/conventions.md` rather than silently.
+Runtime (`requirements.txt`): `requests>=2.31` (HTTP), `pydantic>=2.0` (schema→model + validation), `jsonschema>=4.18` (meta-validation), `python-dotenv` (`.env` loading at provider import), `tiktoken>=0.7` (optional at runtime: absent → heuristic counting). API layer (same file, marked section — the runtime itself does not need them): `fastapi>=0.110`, `uvicorn[standard]>=0.29`.
 
-Dev (`requirements-dev.txt`): `-r requirements.txt` + `pytest>=8.0`. No `pyproject.toml` (see §7.11).
+Dev (`requirements-dev.txt`): `-r requirements.txt` + `pytest>=8.0` + `httpx>=0.27` (FastAPI's `TestClient`). No `pyproject.toml` (see §7.11).
 
 Python: `>= 3.10` is required by the code's typing usage (`Literal`, `list[str]` annotations, `zoneinfo`); development happens on 3.14.
 
@@ -589,12 +649,15 @@ Current behavior, stated plainly — not bugs, but boundaries of the implemented
 5. **Token counts are approximations** for non-OpenAI models when the provider doesn't bill counts (mitigated: `token_count_method` labels them).
 6. **No context-window management.** Long sessions grow until the provider errors with `context`; no compaction/summarization/truncation.
 7. **No cost tracking.** Token counts are logged; prices are not modeled.
-8. **No concurrency.** Sequential, synchronous requests only; no async runtime.
+8. **No concurrency inside a request.** Sequential, synchronous provider calls only; no async runtime. (The HTTP layer handles *requests* concurrently via the threadpool, but each request still blocks its thread for the provider round-trip.)
 9. **Log/session files grow unboundedly** — no rotation or pruning.
 10. **Session continuation trusts the file.** A hand-edited session is loaded as-is (only structurally invalid lines are skipped); divergence handling appends rather than rewrites history (pinned behavior).
-11. **`python-dotenv` missing from `requirements.txt`** (§11) — the one dependency inconsistency found while writing this report.
+11. **`AUDIT.md` and `API_LAYER_PLAN.md` are gitignored historical records** (now under `trash/`) — the audit's resolutions are folded into the report; the plan's durable content lives in §5.7.
 12. **Two providers only.** The abstraction is proven twice; an OpenAI/Anthropic provider would exercise the interface further but exists only as documented guidance (§15.1).
 13. **Heuristic error classification is substring-based** for non-status failures — a provider changing its error wording could reclassify a failure as `unknown`.
+14. **HTTP layer has no auth/CORS/rate limiting and no OpenAI-compatible wire format** — an experimentation gateway by declaration; `POST` requests can invoke models, so don't expose it unguarded beyond localhost.
+15. **HTTP sessions are server-side files** confined under an explicit `session_root` (disabled by default); there is no client-visible session API beyond `session_path` + the returned transcripts.
+16. **Streaming over HTTP is plain chat only**, mirroring the runtime contract; tool/schema turns must use `POST /v1/chat`.
 
 ---
 
@@ -606,6 +669,7 @@ The git history shows the project's actual arc; `AUDIT.md` (24 findings, every o
 2. **Structured outputs:** schema loading/validation, Pydantic model building, extraction with retries — first as a standalone `structured` command.
 3. **Milestone 2 — tool calling:** shared tool types, registry, executor; `run_turn()` composes the tool loop with schema coercion; `chat --schema`.
 4. **Audit-driven hardening (all 24 items):** copy-on-entry orchestration + transcript return (#1/#19); sessions (#2); `error_subtype` log field (#3/#21); HTTP retry transport (#4); provider registry (#5); description validation (#6); flat-form deprecation (#7); instance-based registries (#8/#20); brace-depth JSON extraction (#9); schema-summary retry prompts (#10); provider-billed token counts (#11); `Literal` roles (#12); `token_count_method` (#13); logger hardening (#14); tool-loop progress observer (#15); model-builder test completion (#16); three new example pairs (#17); requirements split (#18); `to_content_dict()` rename (#22); 60s timeouts + `--timeout` (#23); configurable Groq URL (#24).
+5. **HTTP layer (src/api/):** the runtime's second front-end, built in seven reviewable steps (dependencies → schemas → mappers → error handlers → routes → SSE streaming → sessions + integration) with the suite green after every step; zero runtime modules touched, validating the runtime/CLI split as the load-bearing design decision. The planning document's durable content is folded into §5.7; the original now lives gitignored under `trash/API_LAYER_PLAN.md`.
 
 Two structural through-lines: **composition over duplication** (each capability converged on one shared implementation: one tool loop, one retry loop, one retry transport, one JSON extractor) and **contract-first extension** (registries, declared `__all__`, typed roles — all changes that make the *next* change cheaper).
 
@@ -613,16 +677,16 @@ Two structural through-lines: **composition over duplication** (each capability 
 
 ## 14. Deferred work and future roadmap
 
-The audit's closing analysis named sessions, the provider registry, and transcript-returning orchestration as the unlocks for everything else — all three are now built. Remaining directions, none of which are implemented:
+The audit's closing analysis named sessions, the provider registry, and transcript-returning orchestration as the unlocks for everything else — all three are now built, and the HTTP layer followed as the proof. Remaining directions, none of which are implemented:
 
 - **Interactive mode / REPL** — a natural consumer of `run_turn` + `SessionStore`; requires only a loop around existing primitives.
-- **Server mode** — the registry instances and copy-on-entry orchestrator were shaped for it (state can be passed explicitly, not shared via globals); transport and auth are the new work.
+- **API hardening** — auth, CORS, rate limiting, request-id middleware; orthogonal additions via `create_app(...)` parameters or FastAPI dependencies. An OpenAI-compatible wire format would make the gateway a drop-in base URL for existing client libraries.
 - **More providers** — OpenAI/Anthropic/llama.cpp; the interface already separates streaming (text-only) from tool-bearing (non-streaming) calls; providers with native tool streaming would relax §7.4.
 - **Fuller JSON Schema support** — `$ref`/`$defs`, composition keywords; requires extending both `schema.py` (subset check) and `model_builder.py` (mapping) in lockstep.
 - **Context management** — truncation/compaction for long sessions, using `count_message_tokens` as the signal.
 - **Cost estimation** — per-provider price tables over the already-logged token counts.
 - **Packaging** — `pyproject.toml` with console entry point; the runtime/dev dependency split is already in place.
-- **Async/parallel execution** — registries are instance-isolated; the provider interface is sync and would need an async variant or thread offloading.
+- **Async/parallel execution** — registries are instance-isolated; the provider interface is sync and would need an async variant or thread offloading. The API layer's `def` routes already delegate the concurrency question to the threadpool; a runtime-level async provider interface (with the CLI refactored onto the same interface rather than maintaining two) is the deliberate follow-up.
 - **Fill the `experiments/` templates** — the observability (per-request JSONL with taxonomy and token methods) was built for exactly this.
 - **Remove the deprecated flat CLI form** — one-line change when the migration window closes (`_normalize_argv` returns argv unchanged).
 
@@ -694,22 +758,30 @@ Add an optional keyword to `log_request()` (always present in the record, `None`
 - New persistence uses append-only JSONL; torn trailing lines must never be fatal.
 - Every `GatewayError` flows through `_log_and_report()` — don't log/report errors ad hoc elsewhere.
 - `chat_stream()` yields text only; don't smuggle tool payloads through it.
+- Nothing outside `src/api/` imports FastAPI/uvicorn; API route handlers stay pure choreography — resolve pre-network in CLI order, one runtime call, one log record — and every HTTP error derives its status from the one dict in `api/error_handlers.py`.
 
 ---
 
 ## Appendix: repository map
 
 ```text
-README.md               user-facing guide (install, usage, config, subset table)
-REPORT.md               this report — architecture, rationale, decisions, roadmap
-AUDIT.md                historical 24-item audit, all resolved (gitignored)
+README.md               user-facing guide (install, usage, config, subset table, HTTP API)
+documents/REPORT.md     this report — architecture, rationale, decisions, roadmap
 context/                condensed AI-assistant context files (per topic)
-requirements.txt        runtime deps (requests, pydantic, jsonschema, tiktoken)
-requirements-dev.txt    + pytest
+requirements.txt        runtime deps (requests, pydantic, jsonschema, python-dotenv, tiktoken)
+                        + API-layer deps (fastapi, uvicorn), marked
+requirements-dev.txt    + pytest, httpx (TestClient)
 .env.example            template for .env (keys, endpoints, timeouts)
 src/
   cli.py                argparse + I/O shell; both subcommands; logging choreography
   token_utils.py        tiktoken/heuristic counting; count_method()
+  api/                  HTTP front-end (peer of cli.py):
+    app.py              create_app() factory + routes; module-level app for uvicorn
+    schemas.py          request/response Pydantic DTOs (HTTP vocabulary only)
+    mappers.py          DTO ⇄ runtime vocabulary; inline-schema validation
+    deps.py             per-request resolution: provider/tools/schema/session
+    streaming.py        SSE bridge over provider.chat_stream()
+    error_handlers.py   GatewayError → status (one dict) + error log records
   core/
     errors.py           five-category taxonomy + subclasses + classify/wrap
     logger.py           log_request() — one JSONL record per call
@@ -732,5 +804,5 @@ src/
     executor.py         ToolExecutor — never raises; error ToolResults
 examples/structured/    four schema/input pairs (test-guarded)
 experiments/            measurement templates (sampling variance, context, failures)
-tests/                  16 test modules, 227 tests — offline, mocked
+tests/                  23 test modules, 420 tests — offline, mocked (incl. test_api_*.py)
 ```

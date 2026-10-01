@@ -1,4 +1,4 @@
-"""Step 2 tests (API_LAYER_PLAN.md §7): src/api/mappers.py.
+"""Tests for src/api/mappers.py — DTO ⇄ runtime vocabulary conversion.
 
 Mapping tests: lossless dict ⇄ runtime conversion, the session-record
 shape cross-check against core.session._message_to_record, the CLI's
@@ -138,7 +138,7 @@ class TestOutboundMappers:
     DTO_VOCABULARY = {"role", "content", "tool_calls", "tool_call_id", "name"}
 
     def test_mappers_match_session_store_record_shape(self):
-        """The plan's shape guard: MessageOut must carry exactly the field
+        """Shape guard: MessageOut must carry exactly the field
         vocabulary core.session._message_to_record stores, with identical
         values wherever the record speaks — pinning "messages out = what a
         session would store". The one deliberate difference: the DTO holds

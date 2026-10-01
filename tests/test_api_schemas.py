@@ -1,4 +1,4 @@
-"""Step 1 tests (API_LAYER_PLAN.md §7): src/api/schemas.py.
+"""Tests for src/api/schemas.py — the HTTP request/response DTOs.
 
 Pure model tests — no FastAPI app, no network, no providers. These pin the
 HTTP request contract (one message form per request; streaming is plain
@@ -299,7 +299,7 @@ class TestMessageOutSessionRecordShape:
 
     MessageOut is the HTTP DTO; the *record* shape (unset fields omitted,
     `content` kept even when None) is what a session file stores and what
-    mappers.py (Step 2) will produce from ChatMessages — cross-checked
+    mappers.py produces from ChatMessages — cross-checked
     there against `_message_to_record` itself. Here we pin the DTO side:
     the field vocabulary is identical, so a client can round-trip a
     transcript received from /v1/chat back in as `messages`.
